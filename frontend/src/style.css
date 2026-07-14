@@ -1,0 +1,273 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap');
+
+* { box-sizing: border-box }
+
+body {
+  margin: 0;
+  background: #11120f;
+  color: #e8e4d9;
+  font: 14px 'DM Mono', monospace;
+}
+
+main {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 30% 34% 36%;
+}
+
+/* ── Panels ─────────────────────────────────────── */
+.input-panel, .feed, .report {
+  padding: 30px;
+  border-right: 1px solid #34352f;
+  min-height: 100vh;
+  overflow-y: auto;
+}
+.report { border: 0; background: #181914 }
+
+/* ── Typography ─────────────────────────────────── */
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: .13em;
+  color: #a7a991;
+  margin: 0 0 28px;
+}
+
+h1 {
+  font: 600 clamp(50px,7vw,92px)/.78 Newsreader, serif;
+  letter-spacing: -.06em;
+  margin: 0;
+}
+h1 em { color: #d5ff4d }
+
+.intro { line-height: 1.6; color: #a7a991; margin: 28px 0 }
+
+/* ── Input ──────────────────────────────────────── */
+textarea {
+  height: 45vh;
+  width: 100%;
+  background: #1b1c18;
+  border: 1px solid #3b3d36;
+  color: #e8e4d9;
+  padding: 15px;
+  font: 13px/1.55 'DM Mono';
+  resize: vertical;
+}
+
+button {
+  background: #d5ff4d;
+  color: #161710;
+  border: 0;
+  padding: 12px 14px;
+  font: 500 11px 'DM Mono';
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+button:disabled { opacity: .4; cursor: default }
+
+.input-actions { display: flex; gap: 8px; margin-top: 10px }
+
+.secondary {
+  background: transparent;
+  color: #c5c7b6;
+  border: 1px solid #55574e;
+}
+
+/* ── Live Feed ──────────────────────────────────── */
+.status {
+  margin-bottom: 18px;
+  text-transform: uppercase;
+  color: #d5ff4d;
+  font-size: 11px;
+}
+
+.dot {
+  display: inline-block;
+  background: #d5ff4d;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: pulse 1s infinite;
+}
+.dot.done { animation: none }
+
+.section-event {
+  font-size: 10px;
+  color: #a7a991;
+  border-bottom: 1px solid #30312c;
+  padding: 8px 0;
+}
+
+/* ── Findings (collapsible) ─────────────────────── */
+.finding {
+  border-left: 3px solid;
+  margin: 8px 0;
+  background: #1a1b17;
+}
+.assumption  { border-color: #ffba54 }
+.competitor  { border-color: #ee8cc8 }
+.economics   { border-color: #72cdd7 }
+.feasibility { border-color: #a9a1ff }
+
+.finding-header {
+  padding: 10px 13px;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  position: relative;
+  user-select: none;
+}
+.finding-header:hover { background: #22231e }
+
+.finding-header small {
+  display: block;
+  font-size: 10px;
+  width: 100%;
+}
+
+.finding-header strong {
+  font-size: 12px;
+  flex: 1;
+  padding-right: 20px;
+}
+
+.finding-chevron {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  font-size: 12px;
+  color: #a7a991;
+  transition: transform .15s ease;
+}
+.finding-chevron.open {
+  transform: rotate(90deg);
+}
+
+.finding-body {
+  padding: 0 13px 10px;
+  animation: fadeIn .15s ease;
+}
+
+.finding-body p {
+  line-height: 1.55;
+  color: #c0c1b3;
+  margin: 6px 0;
+}
+
+.badge {
+  float: right;
+  padding: 2px 5px;
+  border: 1px solid;
+  font-size: 9px;
+}
+.structural  { color: #ff7979 }
+.significant { color: #ffba54 }
+.minor       { color: #a7a991 }
+
+.fix { color: #d5ff4d !important }
+.muted, .empty { color: #85877c }
+
+/* ── Report ─────────────────────────────────────── */
+.summary {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid #3b3c35;
+  padding-bottom: 20px;
+}
+.summary div { display: grid; gap: 4px }
+.summary b   { font: 32px Newsreader }
+.summary span {
+  text-transform: uppercase;
+  font-size: 9px;
+  color: #a7a991;
+}
+
+h2 {
+  font: 500 12px 'DM Mono';
+  margin-top: 30px;
+  color: #d5ff4d;
+}
+
+/* ── Collapsible diff ───────────────────────────── */
+.diff-section { margin-top: 20px }
+
+.diff-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+.diff-toggle:hover { opacity: .8 }
+
+.diff {
+  overflow: auto;
+  background: #10110e;
+  max-height: 400px;
+  animation: fadeIn .15s ease;
+}
+.diff pre {
+  white-space: pre-wrap;
+  margin: 0;
+  padding: 5px 10px;
+  font: 11px/1.5 'DM Mono';
+}
+.added   { background: #193520; color: #a7eab1 }
+.removed { background: #3b1d1c; color: #ffafaa }
+
+/* ── Copy button ────────────────────────────────── */
+.revised-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 30px;
+}
+.revised-header h2 { margin: 0 }
+
+.copy-btn {
+  background: transparent;
+  color: #a7a991;
+  border: 1px solid #3b3d36;
+  padding: 6px;
+  cursor: pointer;
+  transition: all .2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  line-height: 0;
+}
+.copy-btn:hover {
+  border-color: #d5ff4d;
+  color: #d5ff4d;
+}
+.copy-btn.copied {
+  border-color: #7ddf64;
+  color: #7ddf64;
+}
+
+/* ── Revised spec ───────────────────────────────── */
+.markdown {
+  white-space: pre-wrap;
+  line-height: 1.65;
+  color: #dbd9ce;
+}
+
+.error { color: #ff7979 }
+
+/* ── Animations ─────────────────────────────────── */
+@keyframes pulse { 50% { opacity: .25 } }
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+/* ── Mobile ─────────────────────────────────────── */
+@media (max-width: 900px) {
+  main { display: block }
+  .input-panel, .feed, .report {
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid #34352f;
+  }
+}
