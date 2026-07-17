@@ -25,6 +25,7 @@ INJECTION_PATTERNS = (
 )
 limiter = Limiter(key_func=get_remote_address)
 listeners: dict[str,set[asyncio.Queue]]=defaultdict(set)
+running_pipelines: set[str] = set()
 @asynccontextmanager
 async def lifespan(app): create_db_and_tables(); yield
 app=FastAPI(title="Spec Adversary",lifespan=lifespan)
@@ -62,20 +63,24 @@ def save(sid,**values):
             for key,value in values.items(): setattr(row,key,value)
             db.add(row); db.commit()
 async def run_pipeline(sid,raw):
+    key=str(sid)
+    if key in running_pipelines: return   # already running
+    running_pipelines.add(key)
     final={}
     try:
         async for mode,data in spec_graph.astream({"raw_spec":raw,"findings":[]},stream_mode=["custom","updates"]):
             if mode=="custom":
                 if data.get("type")=="status": save(sid,status=SessionStatus(data["status"]))
-                await publish(str(sid),data)
+                await publish(key,data)
             else:
                 for _,update in data.items():
                     final.update(update)
                     if "parsed_sections" in update: save(sid,parsed_sections=update["parsed_sections"])
                     if "findings" in update: save(sid,findings=update["findings"])
         revised=final.get("revised_spec",raw); save(sid,findings=final.get("findings",[]),revised_spec=revised,status=SessionStatus.done)
-        await publish(str(sid),{"type":"done","revised_spec":revised})
-    except Exception as exc: await publish(str(sid),{"type":"error","message":str(exc)})
+        await publish(key,{"type":"done","revised_spec":revised})
+    except Exception as exc: await publish(key,{"type":"error","message":str(exc)})
+    finally: running_pipelines.discard(key)
 @app.post("/sessions")
 @limiter.limit("5/hour")
 async def create_session(request: Request, payload:CreateSession):
@@ -84,6 +89,19 @@ async def create_session(request: Request, payload:CreateSession):
     row=SpecSession(raw_spec=payload.raw_spec)
     with Session(engine) as db: db.add(row); db.commit(); db.refresh(row)
     asyncio.create_task(run_pipeline(row.id,row.raw_spec)); return {"id":row.id}
+@app.get("/sessions")
+async def list_sessions():
+    with Session(engine) as db:
+        rows = db.query(SpecSession).order_by(SpecSession.created_at.desc()).all()
+    return [
+        {
+            "id": str(row.id),
+            "created_at": row.created_at.isoformat(),
+            "status": row.status.value,
+            "title": row.raw_spec[:80].split("\n")[0] + ("…" if len(row.raw_spec) > 80 else ""),
+        }
+        for row in rows
+    ]
 @app.get("/sessions/{sid}")
 async def get_session(sid:UUID):
     with Session(engine) as db: row=db.get(SpecSession,sid)
@@ -104,7 +122,11 @@ async def stream_session(ws:WebSocket,sid:UUID):
             await ws.send_json({"type":"status","status":row.status.value})
             for section,content in row.parsed_sections.items(): await ws.send_json({"type":"section_parsed","section":section,"content":content})
             for finding in row.findings: await ws.send_json({"type":"finding","finding":finding})
-            if row.status==SessionStatus.done: await ws.send_json({"type":"done","revised_spec":row.revised_spec or ""})
+            if row.status==SessionStatus.done:
+                await ws.send_json({"type":"done","revised_spec":row.revised_spec or ""})
+            elif key not in running_pipelines:
+                # Pipeline died (e.g. backend restart) — re-launch it.
+                asyncio.create_task(run_pipeline(row.id, row.raw_spec))
         while True: await ws.send_json(await queue.get())
     except WebSocketDisconnect: pass
     finally: listeners[key].discard(queue)

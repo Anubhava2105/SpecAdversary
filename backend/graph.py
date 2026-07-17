@@ -44,8 +44,8 @@ async def parse(client, instructions, text, schema):
                 await asyncio.sleep(0.5 * (2 ** retry))
     raise RuntimeError(f"Structured LLM call failed after {MAX_LLM_RETRIES} retries") from last_error
 
-async def generate_markdown(instructions: str, user_input: str) -> str:
-    """Bounded plain-text generation with all untrusted spec content in user_input."""
+async def stream_markdown(instructions: str, user_input: str, writer) -> str:
+    """Stream tokens via *writer* and return the accumulated full text."""
     last_error = None
     for retry in range(MAX_LLM_RETRIES + 1):
         try:
@@ -55,13 +55,19 @@ async def generate_markdown(instructions: str, user_input: str) -> str:
                     {"role": "system", "content": instructions},
                     {"role": "user", "content": user_input},
                 ],
+                stream=True,
             )
-            content = response.choices[0].message.content
-            if content is None:
+            accumulated = ""
+            async for chunk in response:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+                if delta:
+                    accumulated += delta
+                    writer({"type": "token", "content": delta})
+            if not accumulated:
                 raise RuntimeError("Model returned no content")
-            return content
+            return accumulated
         except Exception as exc:
-            logger.exception("generate_markdown() attempt %d failed: %s", retry + 1, exc)
+            logger.exception("stream_markdown() attempt %d failed: %s", retry + 1, exc)
             last_error = exc
             if retry < MAX_LLM_RETRIES:
                 await asyncio.sleep(0.5 * (2 ** retry))
@@ -139,7 +145,7 @@ async def synthesizer(state):
         if key not in seen: seen.add(key); unique.append(f)
     if llm_enabled():
         prompt="Original spec:\n"+state["raw_spec"]+"\n\nValidated findings:\n"+"\n".join(f"- [{x['severity']}] {x['critique']} Fix: {x.get('suggested_fix') or 'n/a'}" for x in unique)
-        revised=await generate_markdown("Rewrite the product spec as markdown. Address all structural and as many significant findings as reasonably fit. Do not mention critics.", prompt)
+        revised=await stream_markdown("Rewrite the product spec as markdown. Address all structural and as many significant findings as reasonably fit. Do not mention critics.", prompt, writer)
     else: revised=state["raw_spec"]+"\n\n## Validation & Risk Controls\n"+"\n".join(f"- {x['suggested_fix']}" for x in unique)
     return {"findings":unique,"revised_spec":revised}
 def build_graph():

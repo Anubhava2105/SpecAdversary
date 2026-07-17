@@ -15,14 +15,22 @@ export function LiveFeed({
   findings,
   status,
   sections,
+  connected,
 }: {
   findings: Finding[];
   status: string;
   sections: string[];
+  connected: boolean;
 }) {
   return (
     <section className="feed">
       <p className="eyebrow">02 / LIVE SIGNAL</p>
+      {!connected && (
+        <div className="ws-status">
+          <span className="dot reconnecting" />
+          reconnecting…
+        </div>
+      )}
       <div className="status">
         <span className={status === 'done' ? 'dot done' : 'dot'} />
         {safeText(status || 'waiting')}
