@@ -4,7 +4,7 @@ import { LiveFeed } from './LiveFeed';
 import { ReportView } from './ReportView';
 import { Sidebar } from './Sidebar';
 import { Group, Panel, Separator } from 'react-resizable-panels';
-import type { Finding, Session } from './types';
+import type { Finding, Session, Critic } from './types';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const WS_BASE = API.replace('http', 'ws');
@@ -14,12 +14,15 @@ export default function App() {
   const [raw, setRaw] = useState('');
   const [findings, setFindings] = useState<Finding[]>([]);
   const [sections, setSections] = useState<string[]>([]);
+  const [missingContext, setMissingContext] = useState<string[]>([]);
   const [status, setStatus] = useState('waiting');
   const [revised, setRevised] = useState('');
   const [id, setId] = useState('');
   const [error, setError] = useState('');
   const [wsConnected, setWsConnected] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [selectedCritics, setSelectedCritics] = useState<Critic[]>(['assumption', 'competitor', 'economics', 'feasibility']);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const retryCount = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
@@ -35,26 +38,30 @@ export default function App() {
       setRaw(x.raw_spec);
       setFindings(x.findings);
       setSections(Object.keys(x.parsed_sections));
+      setMissingContext(x.missing_context || []);
       setRevised(x.revised_spec || '');
       setStatus(x.status);
       setError('');
+      setSelectedCritics(x.selected_critics || ['assumption', 'competitor', 'economics', 'feasibility']);
       history.replaceState(null, '', `?session=${sessionId}`);
     } catch {
       /* best-effort */
     }
   };
 
-  const submit = async (spec: string) => {
+  const submit = async (spec: string, selectedCritics: Critic[]) => {
     setRaw(spec);
     setFindings([]);
     setSections([]);
+    setMissingContext([]);
     setRevised('');
     setStatus('parsing');
     setError('');
+    setSelectedCritics(selectedCritics);
     const r = await fetch(`${API}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ raw_spec: spec }),
+      body: JSON.stringify({ raw_spec: spec, selected_critics: selectedCritics }),
     });
     const x = await r.json();
     setId(x.id);
@@ -73,6 +80,10 @@ export default function App() {
       if (x.status) setStatus(x.status);
       if (x.parsed_sections) {
         setSections(Object.keys(x.parsed_sections));
+      }
+      if (x.missing_context) setMissingContext(x.missing_context);
+      if (x.selected_critics) {
+        setSelectedCritics(x.selected_critics);
       }
     } catch {
       /* backfill is best-effort */
@@ -100,8 +111,15 @@ export default function App() {
 
       ws.onmessage = (e) => {
         const x = JSON.parse(e.data);
-        if (x.type === 'finding') setFindings((v) => [...v, x.finding]);
+        if (x.type === 'finding') {
+          setFindings((v) => {
+            const filtered = v.filter((f) => f.id !== x.finding.id);
+            return [...filtered, x.finding];
+          });
+        }
         if (x.type === 'section_parsed') setSections((v) => [...v, x.section]);
+        if (x.type === 'gatekeeper') setMissingContext(x.missing_context || []);
+        if (x.type === 'findings_moderated') setFindings(x.findings || []);
         if (x.type === 'status') setStatus(x.status);
         if (x.type === 'token') setRevised((v) => v + x.content);
         if (x.type === 'done') {
@@ -144,35 +162,57 @@ export default function App() {
     if (existing) loadSession(existing);
   }, []);
 
+  const replyToFinding = async (findingId: string, reply: string) => {
+    if (!id) return;
+    try {
+      await fetch(`http://localhost:8000/sessions/${id}/findings/${findingId}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reply }),
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const showReport = status === 'synthesizing' || !!revised;
 
   return (
-    <main>
-      <Group orientation="horizontal">
-        <Panel defaultSize={15} minSize={10}>
-          <Sidebar activeId={id} refreshKey={refreshKey} onSelect={loadSession} />
-        </Panel>
+    <main style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden' }}>
+      {isSidebarOpen && (
+        <div style={{ width: '260px', flexShrink: 0, borderRight: '1px solid #34352f', height: '100%' }}>
+          <Sidebar activeId={id} refreshKey={refreshKey} onSelect={loadSession} onClose={() => setIsSidebarOpen(false)} />
+        </div>
+      )}
+      
+      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+        <Group orientation="horizontal">
+          <Panel defaultSize={33} minSize={20}>
+            <SpecInput 
+              onSubmit={submit} 
+              busy={status !== 'waiting' && status !== 'done'} 
+              isSidebarOpen={isSidebarOpen}
+              onOpenSidebar={() => setIsSidebarOpen(true)}
+              missingContext={missingContext}
+            />
+          </Panel>
         
         <Separator className="resize-handle" />
         
-        <Panel defaultSize={25} minSize={15}>
-          <SpecInput onSubmit={submit} busy={status !== 'waiting' && status !== 'done'} />
-        </Panel>
-        
-        <Separator className="resize-handle" />
-        
-        <Panel defaultSize={30} minSize={20}>
+        <Panel defaultSize={33} minSize={20}>
           <LiveFeed
             findings={findings}
             status={status}
             sections={sections}
+            missingContext={missingContext}
             connected={wsConnected}
+            onReply={replyToFinding}
           />
         </Panel>
         
         <Separator className="resize-handle" />
         
-        <Panel defaultSize={30} minSize={20}>
+        <Panel defaultSize={33} minSize={20}>
           {showReport ? (
             <ReportView
               raw={raw}
@@ -188,7 +228,8 @@ export default function App() {
             </section>
           )}
         </Panel>
-      </Group>
+        </Group>
+      </div>
     </main>
   );
 }
