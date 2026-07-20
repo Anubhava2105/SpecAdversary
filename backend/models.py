@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import Column, JSON
 from sqlmodel import Field as SQLField, SQLModel
 
@@ -12,6 +12,9 @@ class Critic(str, Enum):
     competitor = "competitor"
     economics = "economics"
     feasibility = "feasibility"
+    security = "security"
+    compliance = "compliance"
+    marketing = "marketing"
 class Severity(str, Enum):
     structural = "structural"
     significant = "significant"
@@ -19,28 +22,50 @@ class Severity(str, Enum):
 class SessionStatus(str, Enum):
     parsing = "parsing"
     critiquing = "critiquing"
+    moderating = "moderating"
     synthesizing = "synthesizing"
     done = "done"
 class Finding(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
     critic: Critic
     severity: Severity
     claim: str = Field(description="The precise claim or part of the spec being targeted")
     critique: str
     suggested_fix: str | None = None
+    thread: list[dict[str, str]] = Field(default_factory=list, description="Conversation thread between user and critic")
+    dismissed: bool = False
 class FindingsResponse(BaseModel):
     """Structured-output wrapper: each critic response is Pydantic validated."""
     findings: list[Finding] = Field(default_factory=list)
+class ModeratedFinding(BaseModel):
+    """LLM-safe moderator shape; audit fields are restored from the source finding."""
+    id: str
+    critic: Critic
+    severity: Severity
+    claim: str
+    critique: str
+    suggested_fix: str | None = None
+class ModeratorResponse(BaseModel):
+    findings: list[ModeratedFinding] = Field(default_factory=list)
 class ParsedSpec(BaseModel):
-    problem: str = ""
-    users: str = ""
-    solution: str = ""
-    tech_stack: str = ""
+    """Canonical gatekeeper schema; legacy parser keys remain valid on input."""
+    model_config = ConfigDict(populate_by_name=True)
+    problem_statement: str = Field(default="", validation_alias=AliasChoices("problem_statement", "problem"))
+    target_users: str = Field(default="", validation_alias=AliasChoices("target_users", "users"))
+    core_solution: str = Field(default="", validation_alias=AliasChoices("core_solution", "solution"))
+    technical_architecture: str = Field(default="", validation_alias=AliasChoices("technical_architecture", "tech_stack"))
     business_model: str = ""
     risks: str = ""
+    missing_context: list[str] = Field(default_factory=list)
 class SpecSession(SQLModel, table=True):
     id: UUID = SQLField(default_factory=uuid4, primary_key=True)
     raw_spec: str
+    selected_critics: list[str] = SQLField(
+        default_factory=lambda: ["assumption", "competitor", "economics", "feasibility"],
+        sa_column=Column(JSON),
+    )
     parsed_sections: dict[str, str] = SQLField(default_factory=dict, sa_column=Column(JSON))
+    missing_context: list[str] = SQLField(default_factory=list, sa_column=Column(JSON))
     findings: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
     revised_spec: str | None = None
     status: SessionStatus = SessionStatus.parsing
