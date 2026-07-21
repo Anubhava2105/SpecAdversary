@@ -28,5 +28,7 @@ build/
 *.swp
 *.swo
 
+#Database
+*.db
 # macOS
 .DS_Store
