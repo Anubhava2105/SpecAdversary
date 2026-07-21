@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Finding, Critic } from './types';
+import type { Finding, Critic } from '../../types';
+import { ChevronRight, CornerDownRight } from 'lucide-react';
 
 const labels: Record<Critic, string> = {
   assumption: 'Assumption Hunter',
@@ -79,13 +80,13 @@ function FindingCard({ finding: f, onReply }: { finding: Finding, onReply?: (fin
           {isDismissed && <span className="badge minor" style={{marginLeft: 8}}>Dismissed</span>}
         </small>
         <strong style={isDismissed ? { textDecoration: 'line-through', color: '#888' } : {}}>{safeText(f.claim)}</strong>
-        <span className={`finding-chevron ${open ? 'open' : ''}`}>▸</span>
+        <span className={`finding-chevron ${open ? 'open' : ''}`}><ChevronRight size={14} /></span>
       </div>
       {open && (
         <div className="finding-body">
           <p>{safeText(f.critique)}</p>
           {f.suggested_fix && (
-            <p className="fix">↳ {safeText(f.suggested_fix)}</p>
+            <p className="fix"><CornerDownRight size={12} style={{ display: 'inline', marginRight: 4 }} /> {safeText(f.suggested_fix)}</p>
           )}
           
           {f.thread && f.thread.length > 0 && (

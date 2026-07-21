@@ -1,0 +1,400 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,700;1,800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+/* ── Base Landing Styles ────────────────────────────────── */
+.landing-page {
+  background-color: #0a0a0a;
+  color: #e8e4d9;
+  font-family: "JetBrains Mono", monospace;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Navigation ─────────────────────────────────────────── */
+.landing-nav {
+  position: fixed;
+  top: 0;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 40px;
+  z-index: 100;
+  transition: all 0.3s ease;
+  background: transparent;
+}
+
+.landing-nav.scrolled {
+  background: rgba(10, 10, 10, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid #222;
+  padding: 15px 40px;
+}
+
+.nav-left .logo {
+  font-size: 32px;
+  font-family: "Playfair Display", serif;
+  font-weight: 800;
+  text-decoration: none;
+  color: #e8e4d9;
+  letter-spacing: -0.5px;
+}
+
+.nav-left .logo-accent {
+  color: #d5ff4d;
+  font-style: italic;
+  font-weight: 700;
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+.nav-link {
+  color: #a7a991;
+  text-decoration: none;
+  font-size: 14px;
+  transition: color 0.2s ease;
+}
+
+.nav-link:hover {
+  color: #fff;
+}
+
+.cta-btn {
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cta-btn.bordered {
+  border: 1px solid #d5ff4d;
+  color: #d5ff4d;
+  background: transparent;
+}
+
+.cta-btn.bordered:hover {
+  background: rgba(213, 255, 77, 0.1);
+}
+
+.cta-btn.primary {
+  background: #d5ff4d;
+  color: #11120f;
+  border: none;
+}
+
+.cta-btn.primary:hover {
+  background: #e3ff7a;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(213, 255, 77, 0.2);
+}
+
+/* ── Hero Section (Asymmetric) ──────────────────────────── */
+.hero-section {
+  padding: 180px 40px 100px;
+  min-height: 90vh;
+  display: flex;
+  align-items: center;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  max-width: 1200px;
+  margin: 0 auto;
+  align-items: end;
+}
+
+.hero-left h1 {
+  font-family: "Playfair Display", serif;
+  font-size: 5rem;
+  line-height: 1.1;
+  margin: 0;
+  letter-spacing: -1px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.hero-word-wrapper {
+  display: inline-block;
+  overflow: hidden;
+}
+
+.hero-word {
+  display: inline-block;
+}
+
+.hero-right {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.hero-sub {
+  font-size: 18px;
+  line-height: 1.6;
+  color: #a7a991;
+  margin: 0;
+}
+
+.hero-visual {
+  margin-top: 20px;
+  perspective: 1000px;
+}
+
+.visual-terminal {
+  background: #11120f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  transform: rotateX(5deg) rotateY(-5deg);
+}
+
+.visual-header {
+  background: #1a1a1a;
+  padding: 10px 15px;
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  color: #777;
+  border-bottom: 1px solid #333;
+}
+
+.visual-body {
+  padding: 20px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  color: #a7a991;
+  line-height: 1.8;
+}
+
+.log-success {
+  color: #d5ff4d;
+}
+
+/* ── Dossier Section (Vertical List) ────────────────────── */
+.dossier-section {
+  padding: 100px 40px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.dossier-section h2 {
+  font-family: "Playfair Display", serif;
+  font-size: 3.5rem;
+  letter-spacing: -1px;
+  margin-bottom: 60px;
+  color: #fff;
+  text-align: center;
+}
+
+.dossier-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dossier-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 25px;
+  background: #11120f;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 25px;
+  align-items: center;
+  transition: background 0.3s ease;
+}
+
+.dossier-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  background: #1a1a1a;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dossier-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 20px;
+  color: #fff;
+}
+
+.dossier-content p {
+  margin: 0;
+  color: #a7a991;
+  line-height: 1.5;
+}
+
+/* ── Workflow Section (Transcript) ──────────────────────── */
+.workflow-section {
+  padding: 150px 40px;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workflow-terminal {
+  width: 100%;
+  max-width: 800px;
+  background: #000;
+  border: 1px solid #333;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+}
+
+.term-header {
+  background: #111;
+  padding: 12px 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #222;
+}
+
+.term-btn {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.term-btn.red {
+  background: #ff5f56;
+}
+.term-btn.yellow {
+  background: #ffbd2e;
+}
+.term-btn.green {
+  background: #27c93f;
+}
+
+.term-title {
+  margin-left: auto;
+  margin-right: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: #666;
+}
+
+.term-body {
+  padding: 30px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+  color: #a7a991;
+  line-height: 2;
+}
+
+.transcript-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.log-timestamp {
+  color: #555;
+}
+
+.log-step {
+  color: #fff;
+  min-width: 90px;
+}
+
+.log-icon {
+  margin-top: 6px;
+}
+.log-icon.accent {
+  color: #d5ff4d;
+}
+.log-icon.success {
+  color: #27c93f;
+}
+
+/* ── Social Proof & Footer ──────────────────────────────── */
+.social-proof {
+  text-align: center;
+  padding: 150px 40px;
+  background: #11120f;
+  border-top: 1px solid #222;
+}
+
+.social-proof h2 {
+  font-family: "Playfair Display", serif;
+  font-size: 4rem;
+  margin: 0 0 20px 0;
+  letter-spacing: -1px;
+  color: #fff;
+}
+
+.social-proof p {
+  font-size: 20px;
+  color: #a7a991;
+  margin: 0;
+}
+
+.landing-footer {
+  padding: 40px;
+  text-align: center;
+  border-top: 1px solid #222;
+}
+
+.footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+}
+
+.footer-links a {
+  color: #666;
+  text-decoration: none;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover {
+  color: #a7a991;
+}
+
+/* ── Utilities & Mobile ─────────────────────────────────── */
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+  color: #d5ff4d;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .hero-left h1 {
+    font-size: 3.5rem;
+  }
+  .dossier-item {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+  .dossier-icon-wrapper {
+    margin: 0 auto;
+  }
+}

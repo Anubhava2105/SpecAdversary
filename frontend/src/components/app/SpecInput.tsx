@@ -1,15 +1,16 @@
 import { useRef, useState } from 'react';
-import type { Critic } from './types';
+import { Search, Swords, Diamond, Settings, Shield, Scale, Target } from 'lucide-react';
+import type { Critic } from '../../types';
 import { Checkbox, Select } from './FormComponents';
 
-const ALL_CRITICS: { id: Critic; label: string; icon: string }[] = [
-  { id: 'assumption', label: 'Assumption Hunter', icon: '🔍' },
-  { id: 'competitor', label: 'Competitor Simulator', icon: '⚔' },
-  { id: 'economics', label: 'Economics Tester', icon: '◈' },
-  { id: 'feasibility', label: 'Feasibility Auditor', icon: '⚙' },
-  { id: 'security', label: 'Security Auditor', icon: '🛡' },
-  { id: 'compliance', label: 'Compliance Reviewer', icon: '⚖' },
-  { id: 'marketing', label: 'Marketing Skeptic', icon: '🎯' },
+const ALL_CRITICS: { id: Critic; label: string; icon: React.ReactNode }[] = [
+  { id: 'assumption', label: 'Assumption Hunter', icon: <Search size={16} /> },
+  { id: 'competitor', label: 'Competitor Simulator', icon: <Swords size={16} /> },
+  { id: 'economics', label: 'Economics Tester', icon: <Diamond size={16} /> },
+  { id: 'feasibility', label: 'Feasibility Auditor', icon: <Settings size={16} /> },
+  { id: 'security', label: 'Security Auditor', icon: <Shield size={16} /> },
+  { id: 'compliance', label: 'Compliance Reviewer', icon: <Scale size={16} /> },
+  { id: 'marketing', label: 'Marketing Skeptic', icon: <Target size={16} /> },
 ];
 
 export function SpecInput({ 
