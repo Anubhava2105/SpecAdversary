@@ -57,8 +57,22 @@ class ParsedSpec(BaseModel):
     business_model: str = ""
     risks: str = ""
     missing_context: list[str] = Field(default_factory=list)
+
+
+class User(SQLModel, table=True):
+    """Registered user account (email/password or OAuth)."""
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    email: str = SQLField(unique=True, index=True)
+    password_hash: str | None = None
+    display_name: str = ""
+    oauth_provider: str | None = None
+    oauth_provider_id: str | None = None
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class SpecSession(SQLModel, table=True):
     id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    user_id: UUID | None = SQLField(default=None, foreign_key="user.id", index=True)
     raw_spec: str
     selected_critics: list[str] = SQLField(
         default_factory=lambda: ["assumption", "competitor", "economics", "feasibility"],
