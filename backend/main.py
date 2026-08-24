@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlmodel import Session, select
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -70,13 +70,30 @@ else:
         "http://127.0.0.1:5173",
     }
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
+TRUST_PROXY = os.getenv("TRUST_PROXY", "false").lower() == "true"
 DAILY_SESSION_LIMIT = 100
+PER_USER_DAILY_LIMIT = int(os.getenv("PER_USER_DAILY_SESSION_LIMIT", "25"))
 INJECTION_PATTERNS = (
     re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior)\s+instructions?\b", re.IGNORECASE),
     re.compile(r"\b(?:output|reveal|show|print)\s+(?:your\s+)?system\s+prompt\b", re.IGNORECASE),
 )
-limiter = Limiter(key_func=get_remote_address)
-# For reverse proxies, typically slowapi uses X-Forwarded-For if properly configured with proxy middleware, but we'll leave it simple.
+
+def client_key(request: Request) -> str:
+    """Rate-limit identity. Behind a trusted proxy the browser IP arrives in
+    X-Forwarded-For; without this every visitor shares the proxy's address
+    and drains one collective bucket."""
+    if TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return get_remote_address(request)
+
+# Shared across processes/replicas via Redis when configured; memory:// keeps
+# single-process local development working without infrastructure.
+limiter = Limiter(
+    key_func=client_key,
+    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
+)
 inline_tasks: set[asyncio.Task] = set()
 audit_logger = logging.getLogger("audit")
 
@@ -349,8 +366,27 @@ def reject_prompt_injection(raw_spec: str, client_ip: str) -> None:
         audit_logger.warning("prompt_injection_blocked - IP: %s - Preview: %s", client_ip, raw_spec[:200])
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Spec contains a disallowed prompt-injection phrase")
 
-def reserve_daily_session() -> None:
-    """Atomically reserve one of today's SQLite-backed session budget slots."""
+def reserve_daily_session(user: User | None = None) -> None:
+    """Reserve one of today's session budget slots.
+
+    Authenticated users draw from a per-user allowance first; the global
+    SQLite-backed budget remains as a runaway backstop.
+    """
+    if user is not None:
+        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        with Session(engine) as db:
+            created_today = db.exec(
+                select(func.count(SpecSession.id)).where(
+                    SpecSession.user_id == user.id,
+                    SpecSession.created_at >= day_start,
+                )
+            ).one()
+        if created_today >= PER_USER_DAILY_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily limit of {PER_USER_DAILY_LIMIT} analyses reached; try again tomorrow",
+            )
+
     day = datetime.now(timezone.utc).date().isoformat()
     # A single UPSERT closes the read/increment/write race between concurrent
     # requests; `RETURNING` is supported by the SQLite versions SQLAlchemy uses.
@@ -397,7 +433,7 @@ class ReplyPayload(BaseModel):
 @limiter.limit("5/hour")
 async def create_session(request: Request, payload: CreateSession, user: User | None = Depends(get_optional_user)):
     reject_prompt_injection(payload.raw_spec, request.client.host if request.client else "unknown")
-    reserve_daily_session()
+    reserve_daily_session(user)
     selected = [c.value for c in payload.selected_critics]
     row = SpecSession(raw_spec=payload.raw_spec, selected_critics=selected, user_id=user.id if user else None)
     with Session(engine) as db:
