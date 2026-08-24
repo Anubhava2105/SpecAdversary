@@ -375,7 +375,8 @@ def _can_access_session(session_row: SpecSession, user: User | None) -> bool:
 class CreateSession(BaseModel):
     raw_spec: str = Field(min_length=1, max_length=10_000)
     selected_critics: list[Critic] = Field(
-        default_factory=lambda: [Critic.assumption, Critic.competitor, Critic.economics, Critic.feasibility]
+        min_length=1,
+        default_factory=lambda: [Critic.assumption, Critic.competitor, Critic.economics, Critic.feasibility],
     )
 
 def reject_prompt_injection(raw_spec: str, client_ip: str) -> None:
@@ -481,6 +482,8 @@ async def reply_to_finding(request: Request, sid: UUID, fid: str, payload: Reply
             raise HTTPException(404, "Session not found")
         if not _can_access_session(row, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        if row.status not in (SessionStatus.done, SessionStatus.failed):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 
         finding_dict = next((f for f in row.findings if f.get("id") == fid), None)
         if not finding_dict:
@@ -996,6 +999,8 @@ async def re_evaluate_risk(request: Request, rid: UUID, user: User | None = Depe
         session_row = db.get(SpecSession, risk.session_id)
         if not session_row or not _can_access_session(session_row, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        if session_row.status in (SessionStatus.parsing, SessionStatus.critiquing, SessionStatus.moderating, SessionStatus.synthesizing):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 
         if not risk.finding_id:
             raise HTTPException(400, "Cannot re-evaluate a risk without a finding_id")

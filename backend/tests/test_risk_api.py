@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import main
 from main import app
 from database import engine
-from models import Risk, RiskStatus
+from models import Risk, RiskStatus, SpecSession, SessionStatus
 
 # Disable rate limiting for tests
 main.limiter.enabled = False
@@ -25,7 +25,7 @@ def _signup(email: str = "risk@example.com") -> tuple[str, dict]:
 
 
 def _create_session_with_risks(headers: dict | None = None) -> tuple[str, list[str]]:
-    """Create a session and manually insert some Risk rows."""
+    """Create a completed session and manually insert some Risk rows."""
     r = client.post(
         "/sessions",
         json={"raw_spec": "Test spec for risks", "selected_critics": ["assumption"]},
@@ -33,6 +33,13 @@ def _create_session_with_risks(headers: dict | None = None) -> tuple[str, list[s
     )
     assert r.status_code == 200
     session_id = r.json()["id"]
+
+    # Mark the analysis complete: re-evaluation is only valid post-run.
+    with Session(engine) as db:
+        row = db.get(SpecSession, UUID(session_id))
+        row.status = SessionStatus.done
+        db.add(row)
+        db.commit()
 
     # Insert risks directly
     risk_ids = []
