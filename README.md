@@ -12,6 +12,7 @@ Users provide a raw product thesis or technical specification. The system then e
   - **Economics Tester:** Evaluates unit economics, cost structures, and pricing models.
   - **Feasibility Auditor:** Pinpoints technical risks and scalability bottlenecks.
 - **Real-time Streaming:** Delivers live, real-time agent feedback directly to the client via WebSockets.
+- **Durable execution:** Redis-dispatched workers persist every analysis run and stream event to PostgreSQL, so reconnects and backend restarts do not discard work.
 - **Secure Authentication:** Implements a robust JWT-based authentication system featuring anonymous guest soft-gating and seamless session claiming upon registration.
 
 ## System Architecture
@@ -85,7 +86,7 @@ SpecAdversary/
    ```
 
 4. **Access the application:**
-   Navigate your browser to `http://localhost:5174`
+   Navigate your browser to `http://localhost:5174`. The `worker` service processes queued analyses; it must remain running with the API.
 
 ### Local Development Guide
 
