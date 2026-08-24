@@ -18,18 +18,35 @@ export function SpecInput({
   busy,
   isSidebarOpen,
   onOpenSidebar,
-  missingContext = []
+  missingContext = [],
+  selectedCritics: controlledCritics,
+  onCriticsChange,
+  error,
 }: { 
   onSubmit: (spec: string, selectedCritics: Critic[]) => void; 
   busy: boolean;
   isSidebarOpen?: boolean;
   onOpenSidebar?: () => void;
   missingContext?: string[];
+  selectedCritics?: Critic[];
+  onCriticsChange?: (critics: Critic[]) => void;
+  error?: string;
 }) {
   const [value, setValue] = useState('');
-  const [selectedCritics, setSelectedCritics] = useState<Critic[]>(
+  const [internalCritics, setInternalCritics] = useState<Critic[]>(
     ['assumption', 'competitor', 'economics', 'feasibility']
   );
+  
+  const selectedCritics = controlledCritics ?? internalCritics;
+  const setSelectedCritics = (critics: Critic[] | ((prev: Critic[]) => Critic[])) => {
+    const next = typeof critics === 'function' ? critics(selectedCritics) : critics;
+    if (onCriticsChange) {
+      onCriticsChange(next);
+    } else {
+      setInternalCritics(next);
+    }
+  };
+
   const [detailSection, setDetailSection] = useState('');
   const [detailText, setDetailText] = useState('');
   const file = useRef<HTMLInputElement>(null);
@@ -54,7 +71,7 @@ export function SpecInput({
   const isSelected = (critic: Critic) => 
     selectedCritics.includes(critic);
   const suggestedDetails = missingContext.length > 0
-    ? missingContext.map(s => s.replace('_', ' '))
+    ? missingContext.map(s => s.replaceAll('_', ' '))
     : ['problem statement', 'target users', 'core solution', 'technical architecture', 'business model', 'risks'];
   const addDetail = () => {
     if (!detailSection || !detailText.trim()) return;
@@ -84,12 +101,12 @@ export function SpecInput({
         <p className="eyebrow">01a / OPTIONS</p>
         <div className="checkbox-options">
           <Checkbox 
-            label="All Options" 
+            label="Select All" 
             checked={selectedCritics.length === ALL_CRITICS.length}
             onChange={(checked) => {
               setSelectedCritics(checked 
                 ? ALL_CRITICS.map(c => c.id) as Critic[] 
-                : ALL_CRITICS.slice(0, 4).map(c => c.id) as Critic[]);
+                : []);
             }}
           />
           {ALL_CRITICS.map(c => (
@@ -114,7 +131,7 @@ export function SpecInput({
       <div className="input-actions">
         <button onClick={()=>file.current?.click()} className="secondary">Attach .md / .txt</button>
         <input ref={file} type="file" accept=".md,.txt,text/plain" onChange={upload} hidden />
-        <button disabled={busy||!value.trim()} onClick={()=>onSubmit(value, selectedCritics)}>{busy?'RUNNING…':'RUN CRITICS →'}</button>
+        <button disabled={busy||!value.trim()||selectedCritics.length===0} onClick={()=>onSubmit(value, selectedCritics)}>{busy?'RUNNING…':'RUN CRITICS →'}</button>
       </div>
     </section>
   );

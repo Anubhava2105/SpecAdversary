@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { diffWords } from 'diff';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Finding } from '../../types';
 
 const safeText = (value: string) =>
@@ -57,12 +59,16 @@ export function ReportView({
       </div>
 
       <div className="diff-section">
-        <h2
-          className="diff-toggle"
-          onClick={() => setDiffOpen(!diffOpen)}
-        >
-          <span className={`finding-chevron ${diffOpen ? 'open' : ''}`}>▸</span>
-          Change set
+        <h2 className="diff-toggle-container">
+          <button
+            type="button"
+            className="diff-toggle"
+            onClick={() => setDiffOpen(!diffOpen)}
+            aria-expanded={diffOpen}
+          >
+            <span className={`finding-chevron ${diffOpen ? 'open' : ''}`}>▸</span>
+            Change set
+          </button>
         </h2>
         {diffOpen && (
           <div className="diff">
@@ -99,7 +105,10 @@ export function ReportView({
           </button>
         </div>
       </div>
-      <article className={`markdown${streaming ? ' streaming-cursor' : ''}`}>{safeText(revised)}</article>
+      <article className={`markdown${streaming ? ' streaming-cursor' : ''}`}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{safeText(revised)}</ReactMarkdown>
+      </article>
     </section>
   );
 }
+

@@ -15,6 +15,50 @@ const labels: Record<Critic, string> = {
 const safeText = (value: string) =>
   value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 
+function CriticTimeline({
+  selectedCritics,
+  findings,
+  status,
+}: {
+  selectedCritics: Critic[];
+  findings: Finding[];
+  status: string;
+}) {
+  if (selectedCritics.length === 0 || status === 'waiting') return null;
+
+  const criticCounts = findings.reduce((acc, f) => {
+    acc[f.critic] = (acc[f.critic] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  const isActive = status === 'critiquing' || status === 'parsing' || status === 'moderating' || status === 'synthesizing';
+
+  return (
+    <div className="critic-timeline">
+      {selectedCritics.map((critic) => {
+        const count = criticCounts[critic] || 0;
+        const criticState = count > 0
+          ? 'done'
+          : status === 'done'
+            ? 'empty'
+            : isActive && status !== 'parsing'
+              ? 'running'
+              : 'pending';
+        return (
+          <div key={critic} className={`critic-step ${criticState}`}>
+            <span className={`critic-dot ${criticState}`} />
+            <span className="critic-step-label">{labels[critic] ?? critic}</span>
+            {status === 'done' && (
+              <span style={{ marginLeft: 'auto', fontSize: '10px', color: criticState === 'empty' ? '#7b7d6f' : '#d5ff4d' }}>
+                {count} {count === 1 ? 'finding' : 'findings'}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function LiveFeed({
   findings,
   status,
@@ -22,6 +66,7 @@ export function LiveFeed({
   missingContext,
   connected,
   onReply,
+  selectedCritics = [],
 }: {
   findings: Finding[];
   status: string;
@@ -29,6 +74,7 @@ export function LiveFeed({
   missingContext: string[];
   connected: boolean;
   onReply?: (findingId: string, reply: string) => void;
+  selectedCritics?: Critic[];
 }) {
   return (
     <section className="feed">
@@ -49,6 +95,11 @@ export function LiveFeed({
           <span>{missingContext.map(safeText).join(' · ')}</span>
         </aside>
       )}
+      <CriticTimeline
+        selectedCritics={selectedCritics}
+        findings={findings}
+        status={status}
+      />
       {sections.map((x) => (
         <div className="section-event" key={x}>
           PARSED <b>{safeText(x)}</b>
@@ -73,15 +124,15 @@ function FindingCard({ finding: f, onReply }: { finding: Finding, onReply?: (fin
   
   return (
     <article className={`finding ${f.critic} ${isDismissed ? 'dismissed' : ''}`} style={isDismissed ? { opacity: 0.6 } : {}}>
-      <div className="finding-header" onClick={() => setOpen(!open)}>
+      <button type="button" className="finding-header" onClick={() => setOpen(!open)} aria-expanded={open}>
         <small>
           {labels[f.critic]}{' '}
           <span className={`badge ${f.severity}`}>{f.severity}</span>
           {isDismissed && <span className="badge minor" style={{marginLeft: 8}}>Dismissed</span>}
         </small>
-        <strong style={isDismissed ? { textDecoration: 'line-through', color: '#888' } : {}}>{safeText(f.claim)}</strong>
+        <strong className={isDismissed ? 'finding-title-dismissed' : ''}>{safeText(f.claim)}</strong>
         <span className={`finding-chevron ${open ? 'open' : ''}`}><ChevronRight size={14} /></span>
-      </div>
+      </button>
       {open && (
         <div className="finding-body">
           <p>{safeText(f.critique)}</p>
@@ -90,24 +141,24 @@ function FindingCard({ finding: f, onReply }: { finding: Finding, onReply?: (fin
           )}
           
           {f.thread && f.thread.length > 0 && (
-             <div className="finding-thread" style={{marginTop: 15, paddingLeft: 10, borderLeft: '2px solid #3b3d36'}}>
+             <div className="finding-thread-container">
                {f.thread.map((msg, idx) => (
-                 <div key={idx} style={{marginBottom: 8}}>
-                   <strong style={{textTransform: 'uppercase', fontSize: '10px', color: '#a7a991'}}>{msg.role}</strong>
-                   <p style={{margin: '2px 0 0 0', fontSize: '12px'}}>{safeText(msg.content)}</p>
+                 <div key={idx} className="thread-msg">
+                   <strong className="thread-msg-role">{msg.role}</strong>
+                   <p className="thread-msg-content">{safeText(msg.content)}</p>
                  </div>
                ))}
              </div>
           )}
           
           {onReply && !isDismissed && (
-             <div style={{marginTop: 15, display: 'flex', gap: 8}}>
+             <div className="reply-container">
                 <input 
                   type="text" 
                   value={replyText} 
                   onChange={e => setReplyText(e.target.value)} 
                   placeholder="Push back or clarify..."
-                  style={{flex: 1, background: '#11120f', border: '1px solid #3b3d36', color: '#e8e4d9', padding: '6px 10px', borderRadius: 4, outline: 'none', fontSize: 12}}
+                  className="reply-input"
                   onKeyDown={e => {
                       if(e.key === 'Enter' && replyText.trim()) {
                           onReply(f.id, replyText);
@@ -116,13 +167,14 @@ function FindingCard({ finding: f, onReply }: { finding: Finding, onReply?: (fin
                   }}
                 />
                 <button 
+                  type="button"
                   onClick={() => {
                       if(replyText.trim()) {
                           onReply(f.id, replyText);
                           setReplyText("");
                       }
                   }}
-                  style={{padding: '6px 12px', fontSize: 11, background: '#d5ff4d', color: '#11120f', borderRadius: 4, border: 'none', cursor: 'pointer', fontWeight: 600}}
+                  className="reply-btn"
                 >
                   Reply
                 </button>

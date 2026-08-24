@@ -3,14 +3,16 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 gsap.registerPlugin(ScrollTrigger);
-import { Search, Swords, Diamond, Settings, Shield } from 'lucide-react';
+import { Search, Swords, Diamond, Settings, Shield, Scale, Target } from 'lucide-react';
 
 const CRITICS = [
   { id: 'assumption', title: 'Assumption Hunter', desc: 'Flags unverified claims masquerading as facts.', Icon: Search },
   { id: 'competitor', title: 'Competitor Simulator', desc: 'Attacks your feature set from the perspective of a ruthless rival.', Icon: Swords },
   { id: 'economics', title: 'Economics Tester', desc: 'Stress-tests your unit economics and pricing models.', Icon: Diamond },
   { id: 'feasibility', title: 'Feasibility Auditor', desc: 'Pinpoints technical bottlenecks and scalability risks.', Icon: Settings },
-  { id: 'security', title: 'Security Auditor', desc: 'Looks for data leaks and compliance risks.', Icon: Shield },
+  { id: 'security', title: 'Security Auditor', desc: 'Hunts for data leaks, auth gaps, and compliance risks.', Icon: Shield },
+  { id: 'compliance', title: 'Compliance Reviewer', desc: 'Pressure-tests regulatory and policy exposure.', Icon: Scale },
+  { id: 'marketing', title: 'Marketing Skeptic', desc: 'Attacks positioning, messaging, and go-to-market assumptions.', Icon: Target },
 ];
 
 export function DossierSection() {
