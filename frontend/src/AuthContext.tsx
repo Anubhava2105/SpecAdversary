@@ -164,6 +164,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    const refresh = getStoredRefresh();
+    if (refresh) {
+      // Server-side revocation; ignore failures (e.g. offline) — tokens are cleared regardless.
+      fetch(`${API}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh }),
+      }).catch(() => undefined);
+    }
     clearTokens();
     setToken(null);
     setUser(null);

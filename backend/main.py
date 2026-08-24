@@ -32,6 +32,7 @@ from auth import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, create_websocket_ticket, decode_token,
     get_optional_user, get_current_user,
+    revoke_user_refresh_tokens, rotate_refresh_token,
     exchange_google_code, exchange_github_code,
     GOOGLE_CLIENT_ID, GITHUB_CLIENT_ID,
 )
@@ -196,17 +197,18 @@ async def login(request: Request, payload: LoginPayload):
 
 
 @app.post("/auth/refresh")
-async def refresh_token(payload: RefreshPayload):
+@limiter.limit("30/hour")
+async def refresh_token(request: Request, payload: RefreshPayload):
+    return rotate_refresh_token(payload.refresh_token)
+
+
+@app.post("/auth/logout")
+@limiter.limit("10/hour")
+async def logout(request: Request, payload: RefreshPayload):
+    """Revoke every refresh-token family for the token's user (server-side logout)."""
     data = decode_token(payload.refresh_token, expected_type="refresh")
-    user_id = UUID(data["sub"])
-    with Session(engine) as db:
-        user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    return {
-        "access_token": create_access_token(user.id),
-        "refresh_token": create_refresh_token(user.id),
-    }
+    revoke_user_refresh_tokens(UUID(data["sub"]))
+    return {"status": "logged_out"}
 
 
 @app.get("/auth/me")

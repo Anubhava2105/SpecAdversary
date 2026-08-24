@@ -78,6 +78,23 @@ class User(SQLModel, table=True):
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class RefreshToken(SQLModel, table=True):
+    """Server-side refresh-token record enabling rotation and theft detection.
+
+    Tokens are stored as SHA-256 hashes. Each login starts a family; rotation
+    supersedes the presented token, and reuse of a superseded token revokes
+    the whole family.
+    """
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    family_id: UUID = SQLField(index=True)
+    user_id: UUID = SQLField(foreign_key="user.id", index=True)
+    token_hash: str = SQLField(unique=True, index=True)
+    superseded: bool = False
+    revoked: bool = False
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime
+
+
 class SpecSession(SQLModel, table=True):
     id: UUID = SQLField(default_factory=uuid4, primary_key=True)
     user_id: UUID | None = SQLField(default=None, foreign_key="user.id", index=True)

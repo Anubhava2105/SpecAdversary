@@ -1,19 +1,21 @@
 """Authentication: password hashing, JWT tokens, FastAPI dependencies, OAuth helpers."""
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
+import jwt
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlmodel import Session, select
 
 from database import engine
-from models import User
+from models import RefreshToken, User
 
 # ── Config ──────────────────────────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me-in-production")
@@ -43,19 +45,90 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(user_id: UUID) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode(
-        {"sub": str(user_id), "type": "access", "exp": expire},
+        {"sub": str(user_id), "type": "access", "jti": str(uuid4()), "exp": expire},
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
     )
 
 
-def create_refresh_token(user_id: UUID) -> str:
+def create_refresh_token(user_id: UUID, family_id: UUID | None = None) -> str:
+    """Issue a refresh token and persist its hash so it can be rotated and revoked."""
+    family_id = family_id or uuid4()
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    return jwt.encode(
-        {"sub": str(user_id), "type": "refresh", "exp": expire},
+    token = jwt.encode(
+        {"sub": str(user_id), "type": "refresh", "jti": str(uuid4()), "exp": expire},
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
     )
+    with Session(engine) as db:
+        db.add(RefreshToken(
+            family_id=family_id,
+            user_id=user_id,
+            token_hash=hash_token(token),
+            expires_at=expire,
+        ))
+        db.commit()
+    return token
+
+
+def rotate_refresh_token(token: str) -> dict:
+    """Consume a refresh token, return a fresh access/refresh pair.
+
+    Presenting an already-superseded token means either a stolen token or a
+    broken client; both cases revoke the entire family to fail closed.
+    """
+    payload = decode_token(token, expected_type="refresh")
+    digest = hash_token(token)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        row = db.exec(select(RefreshToken).where(RefreshToken.token_hash == digest)).first()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown refresh token")
+        if row.revoked or (row.expires_at and row.expires_at.replace(tzinfo=timezone.utc) < now):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
+
+        if row.superseded:
+            family = db.exec(
+                select(RefreshToken).where(RefreshToken.family_id == row.family_id)
+            ).all()
+            for member in family:
+                member.revoked = True
+                db.add(member)
+            db.commit()
+            logging.getLogger("audit").warning(
+                "refresh_token_reuse_detected - user=%s - family=%s", row.user_id, row.family_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token reuse detected; all sessions were revoked. Please sign in again.",
+            )
+
+        row.superseded = True
+        db.add(row)
+        db.commit()
+        user_id, family_id = row.user_id, row.family_id
+
+    return {
+        "access_token": create_access_token(user_id),
+        "refresh_token": create_refresh_token(user_id, family_id=family_id),
+    }
+
+
+def revoke_user_refresh_tokens(user_id: UUID) -> None:
+    """Revoke every live refresh-token family belonging to the user."""
+    with Session(engine) as db:
+        rows = db.exec(
+            select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked == False)  # noqa: E712
+        ).all()
+        for row in rows:
+            row.revoked = True
+            db.add(row)
+        db.commit()
+
+
+def hash_token(token: str) -> str:
+    """Only hashes of tokens are persisted — a DB leak cannot mint sessions."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def create_websocket_ticket(user_id: UUID) -> str:
@@ -72,7 +145,7 @@ def decode_token(token: str, expected_type: str = "access") -> dict:
     """Decode and validate a JWT. Raises HTTPException on failure."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except JWTError:
+    except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     if payload.get("type") != expected_type:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong token type")
