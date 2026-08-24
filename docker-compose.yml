@@ -1,11 +1,21 @@
 services:
   redis:
     image: redis:7-alpine
+    # Authenticated, memory-bounded, append-only disabled: the queue is
+    # rebuildable from AnalysisRun rows, so durability is unnecessary.
+    command: >
+      sh -c 'exec redis-server
+      --requirepass "$${REDIS_PASSWORD}"
+      --maxmemory 128mb
+      --maxmemory-policy noeviction'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks: [internal]
 
   db:
     image: postgres:16-alpine
@@ -20,6 +30,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks: [internal]
 
   backend:
     build: ./backend
@@ -28,7 +39,8 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql://specadv:specadv@db:5432/specadv
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      RATELIMIT_STORAGE_URI: redis://:${REDIS_PASSWORD}@redis:6379/1
     volumes:
       - ./backend:/app
     depends_on:
@@ -36,6 +48,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks: [internal, default]
 
   worker:
     build: ./backend
@@ -44,7 +57,7 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql://specadv:specadv@db:5432/specadv
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - ./backend:/app
     depends_on:
@@ -52,6 +65,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks: [internal]
 
   frontend:
     build: ./frontend
@@ -65,3 +79,8 @@ services:
 
 volumes:
   pgdata:
+
+networks:
+  # Data services (redis, db, worker) are isolated from the host and the
+  # frontend; only backend bridges both worlds.
+  internal: {}
