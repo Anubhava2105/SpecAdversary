@@ -13,7 +13,9 @@ import models # Make sure models are imported so SQLModel metadata is populated
 config = context.config
 
 # Override sqlalchemy.url with environment variable if present
-database_url = os.environ.get("DATABASE_URL")
+from dotenv import load_dotenv
+load_dotenv()
+database_url = os.environ.get("DATABASE_URL", "sqlite:///spec_adversary.db")
 if database_url:
     # Ensure psycopg2 is used for asyncpg/postgresql schemas if needed, 
     # but here we just pass the URL straight through.

@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field as SQLField, SQLModel
 
 class Critic(str, Enum):
@@ -25,6 +25,14 @@ class SessionStatus(str, Enum):
     moderating = "moderating"
     synthesizing = "synthesizing"
     done = "done"
+    failed = "failed"
+
+class RunStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    cancelled = "cancelled"
 class Finding(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     critic: Critic
@@ -86,8 +94,76 @@ class SpecSession(SQLModel, table=True):
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class AnalysisRun(SQLModel, table=True):
+    """One durable execution of a specification analysis."""
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    session_id: UUID = SQLField(foreign_key="specsession.id", index=True)
+    status: RunStatus = RunStatus.queued
+    re_evaluate_finding_id: str | None = None
+    attempt: int = 0
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class RunEvent(SQLModel, table=True):
+    """Append-only event history used for replay and worker/API decoupling."""
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_run_event_sequence"),)
+    id: int | None = SQLField(default=None, primary_key=True)
+    run_id: UUID = SQLField(foreign_key="analysisrun.id", index=True)
+    sequence: int
+    type: str
+    payload: dict[str, Any] = SQLField(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class DailyUsage(SQLModel, table=True):
     """One row per UTC day; used to enforce the global session budget."""
     __tablename__ = "daily_usage"
     day: str = SQLField(primary_key=True)
     sessions_created: int = 0
+
+
+class RiskStatus(str, Enum):
+    open = "open"
+    mitigating = "mitigating"
+    accepted = "accepted"
+    deferred = "deferred"
+    dismissed = "dismissed"
+    resolved = "resolved"
+
+
+class Risk(SQLModel, table=True):
+    """Normalized risk entry derived from a Finding, with user-managed lifecycle fields."""
+    __table_args__ = (
+        UniqueConstraint("session_id", "finding_id", name="uq_risk_session_finding"),
+    )
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    session_id: UUID = SQLField(foreign_key="specsession.id", index=True)
+    finding_id: str | None = SQLField(default=None)
+    critic: str = ""
+    severity: str = ""
+    claim: str = ""
+    critique: str = ""
+    suggested_fix: str | None = None
+    confidence: int | None = SQLField(default=None)
+    evidence: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSON))
+    validation_plan: str | None = None
+    status: str = SQLField(default=RiskStatus.open.value)
+    owner_id: UUID | None = SQLField(default=None, foreign_key="user.id", index=True)
+    due_date: datetime | None = SQLField(default=None, index=True)
+    source_run_id: UUID | None = SQLField(default=None, foreign_key="analysisrun.id")
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_at: datetime | None = None
+
+
+class RiskComment(SQLModel, table=True):
+    """Threaded comment on a Risk entry."""
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    risk_id: UUID = SQLField(foreign_key="risk.id", index=True)
+    author_id: UUID | None = SQLField(default=None, foreign_key="user.id")
+    body: str = ""
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
