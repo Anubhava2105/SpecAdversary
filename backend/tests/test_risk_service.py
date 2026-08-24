@@ -1,18 +1,9 @@
 """Tests for risk_service business logic."""
-import pytest
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
-from datetime import datetime, timezone, timedelta
-from sqlmodel import Session, create_engine, SQLModel
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import text
 
-import database
+from sqlmodel import Session, select
 
-database.engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
 from database import engine
 from models import Risk, RiskComment, RiskStatus, SpecSession, User, AnalysisRun
 from risk_service import (
@@ -21,10 +12,6 @@ from risk_service import (
     get_risk_summary,
     validate_status_transition,
 )
-
-SQLModel.metadata.create_all(engine)
-with engine.begin() as conn:
-    conn.execute(text("CREATE TABLE IF NOT EXISTS daily_usage (day TEXT PRIMARY KEY, sessions_created INTEGER)"))
 
 
 def _make_session(db: Session, findings: list[dict] | None = None) -> SpecSession:

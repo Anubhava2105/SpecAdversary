@@ -1,26 +1,11 @@
 import pytest
 from sqlmodel import Session
 from uuid import uuid4, UUID
-import database
-from sqlmodel import create_engine, SQLModel
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import text
 from fastapi.testclient import TestClient
-
-database.engine = create_engine(
-    "sqlite://", 
-    connect_args={"check_same_thread": False}, 
-    poolclass=StaticPool
-)
 
 from models import User, SpecSession
 from main import app
 from database import engine
-
-database.create_db_and_tables()
-
-with database.engine.begin() as conn:
-    conn.execute(text("CREATE TABLE IF NOT EXISTS daily_usage (day TEXT PRIMARY KEY, sessions_created INTEGER)"))
 
 client = TestClient(app)
 

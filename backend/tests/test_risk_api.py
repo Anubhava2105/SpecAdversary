@@ -1,30 +1,14 @@
 """API-level tests for the Risk Register endpoints."""
-import pytest
-from uuid import uuid4, UUID
-from sqlmodel import Session, create_engine, SQLModel
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import text
+from uuid import UUID
+from sqlmodel import Session
 from fastapi.testclient import TestClient
 
-import database
-
-if "sqlite" not in str(database.engine.url):
-    database.engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-from models import Risk, RiskComment, RiskStatus, SpecSession, User
+import main
 from main import app
 from database import engine
-
-SQLModel.metadata.create_all(engine)
-with engine.begin() as conn:
-    conn.execute(text("CREATE TABLE IF NOT EXISTS daily_usage (day TEXT PRIMARY KEY, sessions_created INTEGER)"))
+from models import Risk, RiskStatus
 
 # Disable rate limiting for tests
-import main
 main.limiter.enabled = False
 
 # Mock dispatch_run to avoid redis connection
