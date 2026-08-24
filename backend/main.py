@@ -130,7 +130,20 @@ class SecurityHeadersMiddleware:
 async def lifespan(app):
     validate_production_config()
     create_db_and_tables()
+    reaper_task = asyncio.create_task(_reaper_loop())
     yield
+    reaper_task.cancel()
+
+
+async def _reaper_loop() -> None:
+    """API-side safety net for orphaned runs (worker runs its own sweep)."""
+    from pipeline_runner import reap_stuck_runs
+    while True:
+        await asyncio.sleep(60)
+        try:
+            reap_stuck_runs()
+        except Exception:
+            logger.exception("Stuck-run sweep failed")
 app=FastAPI(title="Spec Adversary",lifespan=lifespan, docs_url=None if os.environ.get("ENV") == "production" else "/docs")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

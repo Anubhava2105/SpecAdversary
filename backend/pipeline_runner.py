@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import func
@@ -16,6 +17,12 @@ from risk_service import upsert_risks_from_findings
 
 logger = logging.getLogger(__name__)
 PIPELINE_TIMEOUT_SECONDS = 900
+# A healthy run emits events continuously; the longest legitimate silence is
+# one retry cycle (~140s). Anything quieter than this is orphaned.
+RUN_STALL_SECONDS = int(os.getenv("RUN_STALL_SECONDS", "300"))
+# Backstop slightly above PIPELINE_TIMEOUT_SECONDS: a run still marked
+# "running" past its own in-process timeout lost its worker.
+RUN_MAX_AGE_SECONDS = int(os.getenv("RUN_MAX_AGE_SECONDS", str(PIPELINE_TIMEOUT_SECONDS + 90)))
 
 
 def append_event(run_id: UUID, event: dict) -> RunEvent:
@@ -52,6 +59,60 @@ def update_run(run_id: UUID, **values) -> None:
             setattr(row, key, value)
         db.add(row)
         db.commit()
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
+    """Mark orphaned `running` runs as failed and surface a terminal WS event.
+
+    A run is stuck when its latest RunEvent (or start) is older than
+    RUN_STALL_SECONDS, or when it exceeds RUN_MAX_AGE_SECONDS outright.
+    Without this, a crashed worker leaves the session spinning forever.
+    """
+    now = now or datetime.now(timezone.utc)
+    reaped: list[UUID] = []
+    with Session(engine) as db:
+        running = db.exec(select(AnalysisRun).where(AnalysisRun.status == RunStatus.running)).all()
+        for run in running:
+            started = _as_utc(run.started_at) or _as_utc(run.created_at)
+            latest_event_at = _as_utc(
+                db.exec(select(func.max(RunEvent.created_at)).where(RunEvent.run_id == run.id)).one()
+            )
+            last_activity = max(started, latest_event_at) if latest_event_at else started
+            idle_seconds = (now - last_activity).total_seconds()
+            age_seconds = (now - started).total_seconds()
+
+            stalled = idle_seconds > RUN_STALL_SECONDS
+            too_old = age_seconds > RUN_MAX_AGE_SECONDS
+            if not (stalled or too_old):
+                continue
+
+            code = "run_stalled" if stalled else "run_timeout"
+            run.status = RunStatus.failed
+            run.error_code = code
+            run.error_message = "Analysis interrupted. Please try again."
+            run.finished_at = now
+            db.add(run)
+
+            session = db.get(SpecSession, run.session_id)
+            if session is not None:
+                session.status = SessionStatus.failed
+                db.add(session)
+
+            logger.warning("Reaped %s run %s (idle=%ds age=%ds)", code, run.id, idle_seconds, age_seconds)
+            reaped.append(run.id)
+        db.commit()
+
+    for run_id in reaped:
+        # Terminal events after commit so reconnecting clients see the failure.
+        append_event(run_id, {"type": "error", "message": "Analysis interrupted. Please try again.", "code": "run_interrupted"})
+        append_event(run_id, {"type": "status", "status": SessionStatus.failed.value})
+    return reaped
 
 
 async def execute_run(run_id: UUID) -> None:
