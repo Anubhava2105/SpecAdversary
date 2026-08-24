@@ -108,7 +108,11 @@ async def get_current_user(
 
 # ── OAuth helpers ───────────────────────────────────────────────────────────
 async def exchange_google_code(code: str, redirect_uri: str) -> dict:
-    """Exchange Google OAuth authorization code for user info."""
+    """Exchange Google OAuth authorization code for user info.
+
+    Returns {"id", "email", "name", "email_verified"}; Google always reports
+    whether it has verified the address.
+    """
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -128,11 +132,21 @@ async def exchange_google_code(code: str, redirect_uri: str) -> dict:
             headers={"Authorization": f"Bearer {access_token}"},
         )
         user_resp.raise_for_status()
-        return user_resp.json()  # {"id", "email", "name", ...}
+        info = user_resp.json()  # {"id", "email", "verified_email", ...}
+        return {
+            "id": info["id"],
+            "email": info.get("email", ""),
+            "name": info.get("name", ""),
+            "email_verified": bool(info.get("verified_email")),
+        }
 
 
 async def exchange_github_code(code: str, redirect_uri: str) -> dict:
-    """Exchange GitHub OAuth authorization code for user info."""
+    """Exchange GitHub OAuth authorization code for user info.
+
+    The email is resolved to the primary AND verified address; unverified
+    addresses are never trusted for account linking.
+    """
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             "https://github.com/login/oauth/access_token",
@@ -154,14 +168,24 @@ async def exchange_github_code(code: str, redirect_uri: str) -> dict:
         user_resp.raise_for_status()
         user_data = user_resp.json()
 
-        # GitHub doesn't always return email in /user; fetch from /user/emails
-        if not user_data.get("email"):
-            emails_resp = await client.get(
-                "https://api.github.com/user/emails",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            emails_resp.raise_for_status()
-            primary = next((e for e in emails_resp.json() if e.get("primary")), None)
-            user_data["email"] = primary["email"] if primary else None
+        # GitHub doesn't return email in /user; resolve via /user/emails and
+        # accept only an address that is both primary and verified.
+        emails_resp = await client.get(
+            "https://api.github.com/user/emails",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        emails_resp.raise_for_status()
+        primary = next(
+            (e for e in emails_resp.json() if e.get("primary") and e.get("verified")),
+            None,
+        )
+        user_data["email"] = primary["email"] if primary else None
+        user_data["email_verified"] = primary is not None
 
-        return user_data  # {"id", "email", "login", "name", ...}
+        return {
+            "id": user_data["id"],
+            "email": user_data["email"],
+            "name": user_data.get("name") or user_data.get("login", ""),
+            "login": user_data.get("login", ""),
+            "email_verified": user_data["email_verified"],
+        }

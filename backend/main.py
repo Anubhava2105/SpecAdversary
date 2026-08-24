@@ -212,10 +212,10 @@ async def google_callback(request: Request, payload: OAuthCallbackPayload):
         raise HTTPException(501, "Google OAuth not configured")
     try:
         info = await exchange_google_code(payload.code, payload.redirect_uri)
-    except Exception as exc:
+    except Exception:
         logger.exception("Google OAuth exchange failed")
         raise HTTPException(400, "Google authentication failed")
-    return await _oauth_upsert("google", str(info["id"]), info.get("email", ""), info.get("name", ""), payload.claim_session_id)
+    return await _oauth_upsert("google", str(info["id"]), info.get("email", ""), info.get("name", ""), info.get("email_verified", False), payload.claim_session_id)
 
 
 # ── OAuth: GitHub ──────────────────────────────────────────────────────────
@@ -238,14 +238,25 @@ async def github_callback(request: Request, payload: OAuthCallbackPayload):
         raise HTTPException(501, "GitHub OAuth not configured")
     try:
         info = await exchange_github_code(payload.code, payload.redirect_uri)
-    except Exception as exc:
+    except Exception:
         logger.exception("GitHub OAuth exchange failed")
         raise HTTPException(400, "GitHub authentication failed")
-    return await _oauth_upsert("github", str(info["id"]), info.get("email", ""), info.get("name") or info.get("login", ""), payload.claim_session_id)
+    return await _oauth_upsert("github", str(info["id"]), info.get("email", ""), info.get("name") or info.get("login", ""), info.get("email_verified", False), payload.claim_session_id)
 
 
-async def _oauth_upsert(provider: str, provider_id: str, email: str, display_name: str, claim_session_id: str | None) -> dict:
-    """Find or create a user by OAuth provider, return JWT pair."""
+async def _oauth_upsert(provider: str, provider_id: str, email: str, display_name: str, email_verified: bool = True, claim_session_id: str | None = None) -> dict:
+    """Find or create a user by OAuth provider, return JWT pair.
+
+    The provider identity is always trusted. The *email* is only trusted for
+    linking to an existing password account when the provider has verified it;
+    otherwise a matching-email link would let anyone hijack that account by
+    setting an unverified profile email at the provider.
+    """
+    if not email_verified:
+        audit_logger.warning(
+            "oauth_unverified_email_rejected - provider=%s - provider_id=%s", provider, provider_id
+        )
+        raise HTTPException(400, f"{provider.capitalize()} account email is not verified; verify it at {provider} and try again")
     if not email:
         raise HTTPException(400, f"Could not retrieve email from {provider}")
     with Session(engine) as db:
