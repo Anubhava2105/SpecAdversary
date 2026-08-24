@@ -1,4 +1,12 @@
 services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   db:
     image: postgres:16-alpine
     environment:
@@ -20,10 +28,29 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql://specadv:specadv@db:5432/specadv
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - ./backend:/app
     depends_on:
       db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: python worker.py
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://specadv:specadv@db:5432/specadv
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   frontend:
