@@ -38,13 +38,36 @@ from auth import (
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_ORIGINS = {
-    os.getenv("CORS_ORIGIN", "https://specadversary.com"),
-    "http://localhost:5174",
-    "http://localhost:5173",
-    "http://127.0.0.1:5174",
-    "http://127.0.0.1:5173",
-}
+ENV = os.getenv("ENV", "development")
+IS_PRODUCTION = ENV == "production"
+
+def validate_production_config() -> None:
+    """Refuse to boot in production with unsafe defaults."""
+    if not IS_PRODUCTION:
+        return
+    problems = []
+    secret = os.getenv("JWT_SECRET", "")
+    if len(secret) < 32 or secret.startswith("dev-insecure"):
+        problems.append("JWT_SECRET must be a unique random value of at least 32 characters")
+    frontend = os.getenv("FRONTEND_URL", "")
+    if not frontend or "localhost" in frontend or "127.0.0.1" in frontend:
+        problems.append("FRONTEND_URL must be set to the production public origin")
+    if problems:
+        raise RuntimeError("Refusing to start in production with unsafe configuration: " + "; ".join(problems))
+
+if IS_PRODUCTION:
+    ALLOWED_ORIGINS = {
+        os.getenv("CORS_ORIGIN", "https://specadversary.com"),
+        os.getenv("FRONTEND_URL", "https://specadversary.com"),
+    }
+else:
+    ALLOWED_ORIGINS = {
+        os.getenv("CORS_ORIGIN", "https://specadversary.com"),
+        "http://localhost:5174",
+        "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5173",
+    }
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 DAILY_SESSION_LIMIT = 100
 INJECTION_PATTERNS = (
@@ -83,6 +106,7 @@ class SecurityHeadersMiddleware:
 
 @asynccontextmanager
 async def lifespan(app):
+    validate_production_config()
     create_db_and_tables()
     yield
 app=FastAPI(title="Spec Adversary",lifespan=lifespan, docs_url=None if os.environ.get("ENV") == "production" else "/docs")
