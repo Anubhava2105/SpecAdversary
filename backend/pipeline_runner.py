@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from broker import publish_event
 from database import engine
 from graph import spec_graph
 from models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
@@ -25,8 +26,18 @@ RUN_STALL_SECONDS = int(os.getenv("RUN_STALL_SECONDS", "300"))
 RUN_MAX_AGE_SECONDS = int(os.getenv("RUN_MAX_AGE_SECONDS", str(PIPELINE_TIMEOUT_SECONDS + 90)))
 
 
-def append_event(run_id: UUID, event: dict) -> RunEvent:
-    """Persist an event before it is exposed to reconnecting clients."""
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+async def emit_event(run_id: UUID, event: dict) -> None:
+    """Persist an event, then fan it out to live WebSocket subscribers.
+
+    Persistence happens first: reconnecting clients replay from RunEvent
+    rows, pub/sub only accelerates delivery.
+    """
     event_type = str(event.get("type", "unknown"))
     with Session(engine) as db:
         latest = db.exec(
@@ -36,38 +47,13 @@ def append_event(run_id: UUID, event: dict) -> RunEvent:
         db.add(row)
         db.commit()
         db.refresh(row)
-        return row
+    try:
+        await publish_event(run_id, row.sequence, event)
+    except Exception:
+        logger.exception("Event publish failed for run %s (non-fatal)", run_id)
 
 
-def update_session(session_id: UUID, **values) -> None:
-    with Session(engine) as db:
-        row = db.get(SpecSession, session_id)
-        if row is None:
-            return
-        for key, value in values.items():
-            setattr(row, key, value)
-        db.add(row)
-        db.commit()
-
-
-def update_run(run_id: UUID, **values) -> None:
-    with Session(engine) as db:
-        row = db.get(AnalysisRun, run_id)
-        if row is None:
-            return
-        for key, value in values.items():
-            setattr(row, key, value)
-        db.add(row)
-        db.commit()
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
-
-
-def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
+async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
     """Mark orphaned `running` runs as failed and surface a terminal WS event.
 
     A run is stuck when its latest RunEvent (or start) is older than
@@ -109,10 +95,32 @@ def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
         db.commit()
 
     for run_id in reaped:
-        # Terminal events after commit so reconnecting clients see the failure.
-        append_event(run_id, {"type": "error", "message": "Analysis interrupted. Please try again.", "code": "run_interrupted"})
-        append_event(run_id, {"type": "status", "status": SessionStatus.failed.value})
+        # Terminal events after commit so connected and reconnecting clients see the failure.
+        await emit_event(run_id, {"type": "error", "message": "Analysis interrupted. Please try again.", "code": "run_interrupted"})
+        await emit_event(run_id, {"type": "status", "status": SessionStatus.failed.value})
     return reaped
+
+
+def update_session(session_id: UUID, **values) -> None:
+    with Session(engine) as db:
+        row = db.get(SpecSession, session_id)
+        if row is None:
+            return
+        for key, value in values.items():
+            setattr(row, key, value)
+        db.add(row)
+        db.commit()
+
+
+def update_run(run_id: UUID, **values) -> None:
+    with Session(engine) as db:
+        row = db.get(AnalysisRun, run_id)
+        if row is None:
+            return
+        for key, value in values.items():
+            setattr(row, key, value)
+        db.add(row)
+        db.commit()
 
 
 async def execute_run(run_id: UUID) -> None:
@@ -143,7 +151,7 @@ async def execute_run(run_id: UUID) -> None:
         existing_findings = session.findings
         parsed_sections = session.parsed_sections
 
-    append_event(run_id, {"type": "status", "status": SessionStatus.parsing.value})
+    await emit_event(run_id, {"type": "status", "status": SessionStatus.parsing.value})
     final: dict = {}
     try:
         initial_state = {"raw_spec": raw_spec, "findings": []}
@@ -159,7 +167,7 @@ async def execute_run(run_id: UUID) -> None:
         async def stream() -> None:
             async for mode, data in spec_graph.astream(initial_state, stream_mode=["custom", "updates"]):
                 if mode == "custom" and isinstance(data, dict):
-                    append_event(run_id, data)
+                    await emit_event(run_id, data)
                     if data.get("type") == "status" and data.get("status") in SessionStatus._value2member_map_:
                         update_session(session_id, status=SessionStatus(data["status"]))
                 elif mode == "updates" and isinstance(data, dict):
@@ -189,10 +197,10 @@ async def execute_run(run_id: UUID) -> None:
         except Exception:
             logger.exception("Risk upsert failed for run %s (non-fatal)", run_id)
         update_run(run_id, status=RunStatus.succeeded, finished_at=datetime.now(timezone.utc))
-        append_event(run_id, {"type": "done", "revised_spec": revised_spec})
+        await emit_event(run_id, {"type": "done", "revised_spec": revised_spec})
     except asyncio.CancelledError:
         update_run(run_id, status=RunStatus.cancelled, finished_at=datetime.now(timezone.utc))
-        append_event(run_id, {"type": "error", "message": "Analysis cancelled.", "code": "cancelled"})
+        await emit_event(run_id, {"type": "error", "message": "Analysis cancelled.", "code": "cancelled"})
         raise
     except Exception:
         logger.exception("Pipeline failed for run %s", run_id)
@@ -204,4 +212,4 @@ async def execute_run(run_id: UUID) -> None:
             error_message="Analysis failed. Please try again.",
             finished_at=datetime.now(timezone.utc),
         )
-        append_event(run_id, {"type": "error", "message": "Analysis failed. Please try again.", "code": "pipeline_failed"})
+        await emit_event(run_id, {"type": "error", "message": "Analysis failed. Please try again.", "code": "pipeline_failed"})

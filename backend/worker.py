@@ -24,7 +24,7 @@ async def main() -> None:
         now = asyncio.get_running_loop().time()
         if now - last_reap >= REAP_INTERVAL_SECONDS:
             try:
-                reap_stuck_runs()
+                await reap_stuck_runs()
             except Exception:
                 logger.exception("Stuck-run sweep failed")
             last_reap = now

@@ -7,6 +7,8 @@ from sqlmodel import Session, select
 import pipeline_runner
 from database import engine
 from models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
+import asyncio
+
 from pipeline_runner import reap_stuck_runs
 
 
@@ -55,14 +57,14 @@ def _get_run(run_id) -> AnalysisRun:
 
 def test_recent_active_run_is_untouched():
     run_id, _ = _make_run(last_event_delta=30)
-    assert reap_stuck_runs() == []
+    assert asyncio.run(reap_stuck_runs()) == []
     assert _get_run(run_id).status == RunStatus.running
 
 
 def test_idle_run_reaped_after_stall_threshold():
     # Event silence (400s) exceeds RUN_STALL_SECONDS even though run is young.
     run_id, session_id = _make_run(started_delta=420, last_event_delta=400)
-    reaped = reap_stuck_runs()
+    reaped = asyncio.run(reap_stuck_runs())
     assert UUID(run_id) in reaped
     row = _get_run(run_id)
     assert row.status == RunStatus.failed
@@ -81,7 +83,7 @@ def test_old_run_reaped_by_age_backstop_despite_fresh_events():
         started_delta=pipeline_runner.RUN_MAX_AGE_SECONDS + 60,
         last_event_delta=10,
     )
-    reaped = reap_stuck_runs()
+    reaped = asyncio.run(reap_stuck_runs())
     assert UUID(run_id) in reaped
     assert _get_run(run_id).error_code == "run_timeout"
 
@@ -89,13 +91,13 @@ def test_old_run_reaped_by_age_backstop_despite_fresh_events():
 def test_queued_and_terminal_runs_untouched():
     queued_id, _ = _make_run(status=RunStatus.queued, started_delta=5000)
     done_id, _ = _make_run(status=RunStatus.succeeded, started_delta=5000)
-    assert reap_stuck_runs() == []
+    assert asyncio.run(reap_stuck_runs()) == []
     assert _get_run(queued_id).status == RunStatus.queued
     assert _get_run(done_id).status == RunStatus.succeeded
 
 
 def test_reaper_is_idempotent():
     run_id, _ = _make_run(started_delta=2000)
-    first = reap_stuck_runs()
-    second = reap_stuck_runs()
+    first = asyncio.run(reap_stuck_runs())
+    second = asyncio.run(reap_stuck_runs())
     assert UUID(run_id) in first and second == []

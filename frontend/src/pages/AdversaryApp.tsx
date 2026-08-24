@@ -145,29 +145,6 @@ export default function App() {
     }
   };
 
-  /** Backfill state from REST after a reconnect so we don't miss events. */
-  const backfill = async (sessionId: string) => {
-    try {
-      const r = await fetch(`${API}/sessions/${sessionId}`, {
-        headers: authHeaders,
-      });
-      if (!r.ok) return;
-      const x: Session = await r.json();
-      if (x.findings?.length) setFindings(x.findings);
-      if (x.revised_spec) setRevised(x.revised_spec);
-      if (x.status) setStatus(x.status);
-      if (x.parsed_sections) {
-        setSections(Object.keys(x.parsed_sections));
-      }
-      if (x.missing_context) setMissingContext(x.missing_context);
-      if (x.selected_critics) {
-        setSelectedCritics(x.selected_critics);
-      }
-    } catch {
-      /* backfill is best-effort */
-    }
-  };
-
   useEffect(() => {
     if (!id) return;
 
@@ -198,9 +175,12 @@ export default function App() {
 
       ws.onopen = () => {
         setWsConnected(true);
-        if (retryCount.current > 0) {
-          backfill(id);
-        }
+        // The server replays full authoritative state (snapshot + coalesced
+        // history) on every connection. Reset accumulators first so replayed
+        // events rebuild the view instead of double-appending onto stale data.
+        setRevised("");
+        setFindings([]);
+        setSections([]);
         retryCount.current = 0;
       };
 
