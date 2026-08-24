@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from broker import publish_event
 from database import engine
 from graph import spec_graph
+from llm_gateway import BudgetExceeded, begin_token_budget, end_token_budget
 from models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
 from risk_service import upsert_risks_from_findings
 
@@ -153,6 +154,7 @@ async def execute_run(run_id: UUID) -> None:
 
     await emit_event(run_id, {"type": "status", "status": SessionStatus.parsing.value})
     final: dict = {}
+    begin_token_budget()
     try:
         initial_state = {"raw_spec": raw_spec, "findings": []}
         if selected_critics:
@@ -198,6 +200,18 @@ async def execute_run(run_id: UUID) -> None:
             logger.exception("Risk upsert failed for run %s (non-fatal)", run_id)
         update_run(run_id, status=RunStatus.succeeded, finished_at=datetime.now(timezone.utc))
         await emit_event(run_id, {"type": "done", "revised_spec": revised_spec})
+    except BudgetExceeded as exc:
+        logger.warning("Run %s stopped: %s", run_id, exc)
+        update_session(session_id, status=SessionStatus.failed)
+        update_run(
+            run_id,
+            status=RunStatus.failed,
+            error_code="budget_exceeded",
+            error_message="Analysis exceeded its processing budget. Please try again.",
+            finished_at=datetime.now(timezone.utc),
+        )
+        await emit_event(run_id, {"type": "error", "message": "Analysis exceeded its processing budget.", "code": "budget_exceeded"})
+        await emit_event(run_id, {"type": "status", "status": SessionStatus.failed.value})
     except asyncio.CancelledError:
         update_run(run_id, status=RunStatus.cancelled, finished_at=datetime.now(timezone.utc))
         await emit_event(run_id, {"type": "error", "message": "Analysis cancelled.", "code": "cancelled"})
@@ -213,3 +227,7 @@ async def execute_run(run_id: UUID) -> None:
             finished_at=datetime.now(timezone.utc),
         )
         await emit_event(run_id, {"type": "error", "message": "Analysis failed. Please try again.", "code": "pipeline_failed"})
+    finally:
+        used = end_token_budget()
+        if used:
+            logger.info("run=%s token_usage=%d budget_limit=%d", run_id, used, RUN_TOKEN_BUDGET)

@@ -15,7 +15,6 @@ from llm_gateway import completion_message, get_client, stream_completion
 from pydantic import BaseModel
 from models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
 MAX_LLM_RETRIES = 2
 LLM_TIMEOUT_SECONDS = 45
 TOOL_TIMEOUT_SECONDS = 12
@@ -83,7 +82,7 @@ async def parse(client: AsyncOpenAI, instructions, text, schema):
     for retry in range(MAX_LLM_RETRIES + 1):
         try:
             raw = (await completion_message(
-                client, model=MODEL, messages=[
+                client, messages=[
                     {"role": "system", "content": f"{instructions}\n\nRespond with valid JSON matching this schema:\n{schema_json}"},
                     {"role": "user", "content": text},
                 ],
@@ -117,7 +116,7 @@ async def strict_parse(client, instructions: str, user_input: str, schema: type[
     for retry in range(MAX_LLM_RETRIES + 1):
         try:
             raw = (await completion_message(
-                client, model=MODEL,
+                client,
                 messages=[{"role": "system", "content": instructions}, {"role": "user", "content": user_input}],
                 response_format=response_format, timeout=LLM_TIMEOUT_SECONDS, operation="strict_parse",
             )).content
@@ -142,7 +141,7 @@ async def stream_markdown(instructions: str, user_input: str, writer) -> str:
     for retry in range(MAX_LLM_RETRIES + 1):
         try:
             response = await stream_completion(
-                get_client(), model=MODEL, messages=[
+                get_client(), messages=[
                     {"role": "system", "content": instructions},
                     {"role": "user", "content": user_input},
                 ],
@@ -172,7 +171,7 @@ async def competitor_completion_message(client: AsyncOpenAI, messages: list[dict
     allowing it to terminate the LangGraph run while indexing the response.
     """
     return await completion_message(
-        client, model=MODEL, messages=messages, timeout=LLM_TIMEOUT_SECONDS,
+        client, messages=messages, timeout=LLM_TIMEOUT_SECONDS,
         operation="competitor_tool_loop", retries=MAX_LLM_RETRIES, **kwargs,
     )
 
