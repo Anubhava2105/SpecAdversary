@@ -20,6 +20,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me-in-production")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+WEBSOCKET_TICKET_EXPIRE_SECONDS = 60
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -52,6 +53,16 @@ def create_refresh_token(user_id: UUID) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     return jwt.encode(
         {"sub": str(user_id), "type": "refresh", "exp": expire},
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+
+
+def create_websocket_ticket(user_id: UUID) -> str:
+    """A short-lived, single-purpose credential safe for the WebSocket handshake."""
+    expire = datetime.now(timezone.utc) + timedelta(seconds=WEBSOCKET_TICKET_EXPIRE_SECONDS)
+    return jwt.encode(
+        {"sub": str(user_id), "type": "websocket", "exp": expire},
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
     )
