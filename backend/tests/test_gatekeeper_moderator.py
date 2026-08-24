@@ -1,8 +1,15 @@
 from models import ParsedSpec
-from graph import compute_missing_context, deterministic_moderation, preserve_moderated_identity
+from graph import (
+    competitor_completion_message,
+    compute_missing_context,
+    deterministic_moderation,
+    preserve_moderated_identity,
+)
 from main import restart_pipeline_args, session_snapshot_events
 from models import SessionStatus, SpecSession
 from uuid import uuid4
+import asyncio
+from types import SimpleNamespace
 
 
 def finding(identifier: str, **overrides):
@@ -55,3 +62,29 @@ def test_restart_uses_persisted_selected_critics():
     identifier = uuid4()
     row = SpecSession(id=identifier, raw_spec="spec", selected_critics=["security", "marketing"])
     assert restart_pipeline_args(row) == (identifier, "spec", ["security", "marketing"])
+
+
+def test_competitor_completion_retries_when_provider_returns_no_choices(monkeypatch):
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(choices=None)
+            return SimpleNamespace(choices=[SimpleNamespace(message="usable message")])
+
+    completions = FakeCompletions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr("graph.LLM_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr("llm_gateway.asyncio.sleep", no_sleep)
+
+    message = asyncio.run(competitor_completion_message(client, [{"role": "user", "content": "test"}]))
+
+    assert message == "usable message"
+    assert completions.calls == 2
