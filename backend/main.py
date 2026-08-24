@@ -115,8 +115,12 @@ class SecurityHeadersMiddleware:
                     (b"x-frame-options", b"DENY"),
                     (b"referrer-policy", b"strict-origin-when-cross-origin"),
                     (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
-                    (b"x-xss-protection", b"1; mode=block"),
+                    # The API serves no HTML; deny everything so injected
+                    # content has no execution path even on error pages.
+                    (b"content-security-policy", b"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"),
                 ]
+                if IS_PRODUCTION:
+                    extra.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
                 message["headers"] = list(message.get("headers", [])) + extra
             await send(message)
 
