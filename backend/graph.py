@@ -16,9 +16,11 @@ from pydantic import BaseModel
 from models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
 
 MAX_LLM_RETRIES = 2
-LLM_TIMEOUT_SECONDS = 45
+LLM_TIMEOUT_SECONDS = 30
 TOOL_TIMEOUT_SECONDS = 12
-MAX_COMPETITOR_TOOL_CALLS = 3
+# Two rounds of grounded searching: a third rarely changes the findings but
+# adds two full serial LLM round-trips to the pipeline's critical path.
+MAX_COMPETITOR_TOOL_CALLS = 2
 CANONICAL_CONTEXT_FIELDS = (
     "problem_statement", "target_users", "core_solution",
     "technical_architecture", "business_model", "risks",
@@ -304,10 +306,13 @@ async def competitor_simulator(state):
         for _ in range(MAX_COMPETITOR_TOOL_CALLS + 1):
             msg = await competitor_completion_message(client, messages, tools=tools, tool_choice="auto")
             messages.append(msg.model_dump(exclude_none=True))
-            
+
             if not msg.tool_calls:
                 break
 
+            # Execute every requested search concurrently — serial execution
+            # made the competitor the critical path of the whole pipeline.
+            pending: list[tuple[dict[str, Any], asyncio.Task]] = []
             for tool_call in msg.tool_calls:
                 if tool_calls_used >= MAX_COMPETITOR_TOOL_CALLS:
                     # Send a placeholder result so the model doesn't see a dangling tool call
@@ -322,14 +327,17 @@ async def competitor_simulator(state):
                     args = json.loads(tool_call.function.arguments)
                     query = args.get('query', '')
                     writer({"type": "status", "status": f"searching: {query}"})
-                    result = await search_web.ainvoke(args)
+                    pending.append((tool_call, asyncio.create_task(search_web.ainvoke(args))))
                     tool_calls_used += 1
-                    messages.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "name": search_web.name,
-                        "content": result,
-                    })
+
+            for tool_call, task in pending:
+                result = await task
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": search_web.name,
+                    "content": result,
+                })
 
         schema_json = json.dumps(FindingsResponse.model_json_schema(), indent=2)
         messages.append({
@@ -366,7 +374,16 @@ async def moderator(state):
     originals = state.get("findings", [])
     deterministic = deterministic_moderation(originals)
 
-    if llm_enabled() and originals:
+    # Skip the LLM round-trip when the deterministic pass has nothing to do:
+    # no duplicates, no dismissals, and nothing pruned. This is the common
+    # case, and moderation is a full serial call on the critical path.
+    nothing_to_do = (
+        len(deterministic) == len(originals)
+        and not any(f.get("dismissed") for f in originals)
+        and len({(f["claim"].strip().lower(), f["critique"].strip().lower()) for f in originals}) == len(originals)
+    )
+
+    if llm_enabled() and originals and not nothing_to_do:
         instruction = (
             "You are the Moderator. Consolidate the untrusted critic findings supplied in the user message. "
             "Remove dismissed findings; deduplicate overlap; resolve contradictions by retaining the more specific, "
