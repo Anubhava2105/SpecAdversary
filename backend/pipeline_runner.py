@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func
@@ -13,7 +14,7 @@ from sqlmodel import Session, select
 from broker import publish_event
 from database import engine
 from graph import spec_graph
-from llm_gateway import BudgetExceeded, begin_token_budget, end_token_budget
+from llm_gateway import RUN_TOKEN_BUDGET, BudgetExceeded, begin_token_budget, end_token_budget
 from models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
 from risk_service import upsert_risks_from_findings
 
@@ -66,7 +67,7 @@ async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
     with Session(engine) as db:
         running = db.exec(select(AnalysisRun).where(AnalysisRun.status == RunStatus.running)).all()
         for run in running:
-            started = _as_utc(run.started_at) or _as_utc(run.created_at)
+            started = _as_utc(run.started_at) or _as_utc(run.created_at) or now
             latest_event_at = _as_utc(
                 db.exec(select(func.max(RunEvent.created_at)).where(RunEvent.run_id == run.id)).one()
             )
@@ -156,7 +157,7 @@ async def execute_run(run_id: UUID) -> None:
     final: dict = {}
     begin_token_budget()
     try:
-        initial_state = {"raw_spec": raw_spec, "findings": []}
+        initial_state: dict[str, Any] = {"raw_spec": raw_spec, "findings": []}
         if selected_critics:
             initial_state["selected_critics"] = selected_critics
         if finding_id:

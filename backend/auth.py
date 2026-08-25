@@ -77,7 +77,7 @@ def rotate_refresh_token(token: str) -> dict:
     Presenting an already-superseded token means either a stolen token or a
     broken client; both cases revoke the entire family to fail closed.
     """
-    payload = decode_token(token, expected_type="refresh")
+    decode_token(token, expected_type="refresh")
     digest = hash_token(token)
     now = datetime.now(timezone.utc)
     with Session(engine) as db:
@@ -262,3 +262,4 @@ async def exchange_github_code(code: str, redirect_uri: str) -> dict:
             "login": user_data.get("login", ""),
             "email_verified": user_data["email_verified"],
         }
+

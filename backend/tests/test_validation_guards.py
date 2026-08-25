@@ -7,9 +7,8 @@ from sqlmodel import Session
 
 import main
 from database import engine
-from models import Risk, SpecSession, SessionStatus
+from models import Risk, SessionStatus, SpecSession
 
-main.limiter.enabled = False
 main.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)
 

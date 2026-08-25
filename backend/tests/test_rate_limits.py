@@ -1,19 +1,17 @@
 """Tests for per-user daily analysis budgets and proxy-aware rate-limit keys."""
+# Keep the budget test free of infrastructure dependencies
+import asyncio
 from datetime import datetime, timezone
-from uuid import uuid4
 
-import main
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+import main
 from auth import hash_password
 from database import engine
-from models import User, SpecSession
+from models import SpecSession, User
 
-main.limiter.enabled = False
-# Keep the budget test free of infrastructure dependencies
-import asyncio
 main.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)
 

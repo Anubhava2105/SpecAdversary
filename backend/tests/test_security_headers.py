@@ -1,10 +1,8 @@
 """Tests for security response headers."""
 from fastapi.testclient import TestClient
 
-import main
 from main import app
 
-main.limiter.enabled = False
 client = TestClient(app)
 
 

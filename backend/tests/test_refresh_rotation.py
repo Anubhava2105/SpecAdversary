@@ -1,13 +1,11 @@
 """Tests for refresh-token rotation, theft detection, and logout revocation."""
 from fastapi.testclient import TestClient
-
-import main
-from main import app
-from database import engine
-from models import RefreshToken, User
 from sqlmodel import Session, select
 
-main.limiter.enabled = False
+from database import engine
+from main import app
+from models import RefreshToken
+
 client = TestClient(app)
 
 

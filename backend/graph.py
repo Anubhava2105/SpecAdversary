@@ -1,18 +1,26 @@
 """LangGraph pipeline. Custom stream writer events are forwarded to WebSockets."""
 from __future__ import annotations
-import asyncio, json, logging, operator, os
+
+import asyncio
+import json
+import logging
+import operator
+import os
 from uuid import uuid4
+
 from langchain_core.tools import tool
 from tavily import AsyncTavilyClient
 
 logger = logging.getLogger(__name__)
 from typing import Annotated, Any, TypedDict
+
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from openai import AsyncOpenAI
-from llm_gateway import completion_message, get_client, stream_completion
 from pydantic import BaseModel
+
+from llm_gateway import completion_message, get_client, stream_completion
 from models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
 
 MAX_LLM_RETRIES = 2
@@ -180,7 +188,7 @@ async def competitor_completion_message(client: AsyncOpenAI, messages: list[dict
 async def orchestrator(state):
     if state.get("re_evaluate_finding_id"):
         return {}
-        
+
     writer = get_stream_writer()
     if llm_enabled():
         parsed = await parse(get_client(), "Extract the spec into the canonical fields. Preserve facts, leave unsupported fields empty, and report missing_context using canonical field names.", state["raw_spec"], ParsedSpec)
@@ -278,29 +286,29 @@ async def competitor_simulator(state):
     writer, sections = get_stream_writer(), state["parsed_sections"]
     if not llm_enabled():
         return await critic(state, Critic.competitor)
-        
+
     client = get_client()
     spec_text = "\n\n".join(f"## {k}\n{v}" for k,v in sections.items())
     system_prompt = (
-        BRIEFS[Critic.competitor] + 
+        BRIEFS[Critic.competitor] +
         " Return between 2 and 5 findings. Set critic to 'competitor'. Do not invent missing facts. "
         "You have access to a web search tool. Use it to find actual real-world competitors for the proposed product."
     )
-    
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Here is the product spec:\n{spec_text}\n\nSearch for real competitors."}
     ]
-    
+
     tools = [{
         "type": "function",
         "function": {
             "name": search_web.name,
             "description": search_web.description,
-            "parameters": search_web.args_schema.model_json_schema()
+            "parameters": search_web.args_schema.model_json_schema()  # type: ignore[union-attr]
         }
     }]
-    
+
     tool_calls_used = 0
     try:
         for _ in range(MAX_COMPETITOR_TOOL_CALLS + 1):
@@ -333,7 +341,7 @@ async def competitor_simulator(state):
             for tool_call, task in pending:
                 result = await task
                 messages.append({
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": tool_call.id,  # type: ignore[attr-defined]
                     "role": "tool",
                     "name": search_web.name,
                     "content": result,
@@ -354,7 +362,7 @@ async def competitor_simulator(state):
     except Exception as e:
         logger.exception("Failed to parse agent JSON: %s", e)
         return await critic(state, Critic.competitor)
-        
+
     for finding in rows: writer({"type":"finding", "finding":finding})
     return {"findings": rows}
 
@@ -410,12 +418,12 @@ async def re_evaluate(state):
     fid = state["re_evaluate_finding_id"]
     existing_findings = state.get("existing_findings", [])
     target = next((f for f in existing_findings if f.get("id") == fid), None)
-    
+
     if not target:
         return {"findings": existing_findings}
-        
+
     writer({"type": "status", "status": "re-evaluating finding..."})
-    
+
     if llm_enabled():
         client = get_client()
         system_prompt = (
@@ -424,13 +432,13 @@ async def re_evaluate(state):
             "If you agree with the user and the finding is no longer valid, set `dismissed: true`. "
             "Otherwise `dismissed: false`."
         )
-        
+
         thread_text = ""
         for msg in target.get("thread", []):
             thread_text += f"{msg['role'].upper()}:\n{msg['content']}\n\n"
-            
+
         prompt_text = f"Original spec:\n{state.get('raw_spec')}\n\nOriginal finding:\n{json.dumps(target, indent=2)}\n\nConversation:\n{thread_text}"
-        
+
         result = await parse(client, system_prompt, prompt_text, Finding)
         updated = result.model_dump(mode="json")
         updated["id"] = fid
@@ -439,7 +447,7 @@ async def re_evaluate(state):
         updated = target.copy()
         updated["critique"] = "Stub-mode: updated critique."
         updated["thread"] = target.get("thread", [])
-        
+
     new_findings = []
     for f in existing_findings:
         if f.get("id") == fid:
@@ -447,7 +455,7 @@ async def re_evaluate(state):
             writer({"type": "finding", "finding": updated})
         else:
             new_findings.append(f)
-            
+
     return {"findings": new_findings}
 
 def fan_out(s):
@@ -483,3 +491,5 @@ def build_graph():
     g.add_edge("re_evaluate", "synthesizer")
     g.add_edge("synthesizer",END); return g.compile()
 spec_graph=build_graph()
+
+

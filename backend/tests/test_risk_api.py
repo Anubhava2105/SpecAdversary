@@ -1,15 +1,15 @@
 """API-level tests for the Risk Register endpoints."""
 from uuid import UUID
-from sqlmodel import Session
+
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 import main
-from main import app
 from database import engine
-from models import Risk, RiskStatus, SpecSession, SessionStatus
+from main import app
+from models import Risk, SessionStatus, SpecSession
 
 # Disable rate limiting for tests
-main.limiter.enabled = False
 
 # Mock dispatch_run to avoid redis connection
 main.dispatch_run = lambda run_id: __import__("asyncio").sleep(0)

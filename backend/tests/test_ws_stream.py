@@ -9,7 +9,6 @@ import main
 from database import engine
 from models import AnalysisRun, RunEvent, RunStatus, SpecSession
 
-main.limiter.enabled = False
 main.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)
 

@@ -86,7 +86,8 @@ async def completion_message(
         started = time.perf_counter()
         try:
             response = await asyncio.wait_for(
-                client.chat.completions.create(model=resolved_model, messages=messages, **kwargs), timeout=timeout
+                client.chat.completions.create(model=resolved_model, messages=messages, **kwargs),  # type: ignore[arg-type]
+                timeout=timeout
             )
             choices = getattr(response, "choices", None)
             if not choices or choices[0].message is None:
@@ -126,7 +127,8 @@ async def stream_completion(
     started = time.perf_counter()
     try:
         stream = await asyncio.wait_for(
-            client.chat.completions.create(model=resolved_model, messages=messages, stream=True), timeout=timeout
+            client.chat.completions.create(model=resolved_model, messages=messages, stream=True),  # type: ignore[arg-type]
+            timeout=timeout
         )
         logger.info("llm_stream_connected operation=%s model=%s latency_ms=%d", operation, resolved_model, (time.perf_counter() - started) * 1000)
     except BudgetExceeded:
@@ -138,7 +140,7 @@ async def stream_completion(
     async def guarded():
         characters = 0
         try:
-            async for chunk in stream:
+            async for chunk in stream:  # type: ignore[union-attr]
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
                     characters += len(delta)
