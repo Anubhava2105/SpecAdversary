@@ -1,0 +1,17 @@
+# Ruff configuration for the SpecAdversary backend.
+line-length = 110
+target-version = "py312"
+extend-exclude = [".venv", "alembic/versions"]
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501", # long lines are tolerated where wrapping hurts readability
+]
+
+[lint.per-file-ignores]
+# main.py imports app modules after load_dotenv(); graph.py after langgraph setup.
+"main.py" = ["E402"]
+"graph.py" = ["E402", "E701", "E702"]
+"alembic/env.py" = ["E402"]
+"tests/*" = ["E402"]
