@@ -103,16 +103,18 @@ def test_failed_run_does_not_cascade_to_terminal_session(session_status):
     """A stale orphaned run reaped late must not corrupt a finished session."""
     run = make_run()
     session = _session(session_status)
-    transition_run(run, RunStatus.failed, cascade_session=session)
+    events = transition_run(run, RunStatus.failed, cascade_session=session)
     assert run.status == RunStatus.failed
     assert session.status == session_status  # untouched
+    assert events == []  # nothing changed, so nothing to announce
 
 
 def test_successful_run_does_not_cascade():
     run = make_run()
     session = _session(SessionStatus.synthesizing)
-    transition_run(run, RunStatus.succeeded, cascade_session=session)
+    events = transition_run(run, RunStatus.succeeded, cascade_session=session)
     assert session.status == SessionStatus.synthesizing  # success path sets `done` explicitly itself
+    assert events == []  # success cascades nothing
 
 
 def test_transition_run_honours_injected_clock():

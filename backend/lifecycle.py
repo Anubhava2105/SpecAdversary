@@ -115,9 +115,8 @@ def transition_run(
         setattr(run, key, value)
 
     events: list[dict[str, str]] = []
-    if cascade_session is not None:
-        if to is RunStatus.failed and not accepts_client_activity(cascade_session.status):
-            transition_session(cascade_session, SessionStatus.failed)
+    if cascade_session is not None and to is RunStatus.failed and cascade_session.status in _IN_FLIGHT:
+        transition_session(cascade_session, SessionStatus.failed)
         events.extend(status_events(cascade_session.status))
     return events
 

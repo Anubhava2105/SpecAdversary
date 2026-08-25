@@ -65,6 +65,7 @@ async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
     """
     now = now or datetime.now(timezone.utc)
     reaped: list[UUID] = []
+    terminal_events: dict[UUID, list[dict]] = {}
     with Session(engine) as db:
         running = db.exec(select(AnalysisRun).where(AnalysisRun.status == RunStatus.running)).all()
         for run in running:
@@ -85,7 +86,7 @@ async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
             session = db.get(SpecSession, run.session_id)
             # The lifecycle cascade only flips in-flight sessions, so a stale
             # orphaned run reaped after its session finished can't corrupt it.
-            lifecycle.transition_run(
+            events = lifecycle.transition_run(
                 run,
                 RunStatus.failed,
                 cascade_session=session,
@@ -99,12 +100,14 @@ async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
 
             logger.warning("Reaped %s run %s (idle=%ds age=%ds)", code, run.id, idle_seconds, age_seconds)
             reaped.append(run.id)
+            terminal_events[run.id] = events
         db.commit()
 
     for run_id in reaped:
         # Terminal events after commit so connected and reconnecting clients see the failure.
         await emit_event(run_id, {"type": "error", "message": "Analysis interrupted. Please try again.", "code": "run_interrupted"})
-        await emit_event(run_id, {"type": "status", "status": SessionStatus.failed.value})
+        for event in terminal_events.get(run_id, []):
+            await emit_event(run_id, event)
     return reaped
 
 
@@ -235,35 +238,30 @@ async def execute_run(run_id: UUID) -> None:
         await emit_event(run_id, {"type": "done", "revised_spec": revised_spec})
     except BudgetExceeded as exc:
         logger.warning("Run %s stopped: %s", run_id, exc)
-        error_message = "Analysis exceeded its processing budget. Please try again."
-        events = _apply_run_transition(
-            run_id,
-            RunStatus.failed,
-            cascade=True,
-            error_code="budget_exceeded",
-            error_message=error_message,
-        )
-        await emit_event(run_id, {"type": "error", "message": error_message, "code": "budget_exceeded"})
-        for event in events:
-            await emit_event(run_id, event)
+        await _fail_run(run_id, "budget_exceeded", "Analysis exceeded its processing budget. Please try again.")
     except asyncio.CancelledError:
         _apply_run_transition(run_id, RunStatus.cancelled)
         await emit_event(run_id, {"type": "error", "message": "Analysis cancelled.", "code": "cancelled"})
         raise
     except Exception:
         logger.exception("Pipeline failed for run %s", run_id)
-        error_message = "Analysis failed. Please try again."
-        events = _apply_run_transition(
-            run_id,
-            RunStatus.failed,
-            cascade=True,
-            error_code="pipeline_failed",
-            error_message=error_message,
-        )
-        await emit_event(run_id, {"type": "error", "message": error_message, "code": "pipeline_failed"})
-        for event in events:
-            await emit_event(run_id, event)
+        await _fail_run(run_id, "pipeline_failed", "Analysis failed. Please try again.")
     finally:
         used = end_token_budget()
         if used:
             logger.info("run=%s token_usage=%d budget_limit=%d", run_id, used, RUN_TOKEN_BUDGET)
+
+
+async def _fail_run(run_id: UUID, code: str, message: str) -> None:
+    """Fail a run mid-flight: transition (cascading to an in-flight session),
+    then surface the error and resulting status events on the stream."""
+    events = _apply_run_transition(
+        run_id,
+        RunStatus.failed,
+        cascade=True,
+        error_code=code,
+        error_message=message,
+    )
+    await emit_event(run_id, {"type": "error", "message": message, "code": code})
+    for event in events:
+        await emit_event(run_id, event)
