@@ -17,7 +17,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # PostgreSQL enums are strict types; the gatekeeper migration skipped this
     # because it targeted SQLite.  We now add the missing 'moderating' value.
-    op.execute("ALTER TYPE sessionstatus ADD VALUE IF NOT EXISTS 'moderating' AFTER 'critiquing'")
+    # SQLite stores statuses as plain VARCHARs, so there is nothing to alter.
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("ALTER TYPE sessionstatus ADD VALUE IF NOT EXISTS 'moderating' AFTER 'critiquing'")
 
 
 def downgrade() -> None:

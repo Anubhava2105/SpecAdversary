@@ -29,15 +29,19 @@ def upgrade() -> None:
     )
     op.create_index("ix_user_email", "user", ["email"], unique=True)
 
-    # Add user_id FK to specsession — nullable so existing guest rows stay valid
-    op.add_column("specsession", sa.Column("user_id", sa.Uuid(), nullable=True))
-    op.create_foreign_key("fk_specsession_user", "specsession", "user", ["user_id"], ["id"])
+    # Add user_id FK to specsession — nullable so existing guest rows stay valid.
+    # batch_alter_table keeps the migration replayable on SQLite (used by the
+    # alembic-consistency test); on Postgres it degrades to plain ALTERs.
+    with op.batch_alter_table("specsession") as batch:
+        batch.add_column(sa.Column("user_id", sa.Uuid(), nullable=True))
+        batch.create_foreign_key("fk_specsession_user", "user", ["user_id"], ["id"])
     op.create_index("ix_specsession_user_id", "specsession", ["user_id"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_specsession_user_id", table_name="specsession")
-    op.drop_constraint("fk_specsession_user", "specsession", type_="foreignkey")
-    op.drop_column("specsession", "user_id")
+    with op.batch_alter_table("specsession") as batch:
+        batch.drop_constraint("fk_specsession_user", type_="foreignkey")
+        batch.drop_column("user_id")
     op.drop_index("ix_user_email", table_name="user")
     op.drop_table("user")
