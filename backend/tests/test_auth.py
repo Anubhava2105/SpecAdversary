@@ -1,11 +1,11 @@
-import pytest
-from sqlmodel import Session
-from uuid import uuid4, UUID
-from fastapi.testclient import TestClient
+from uuid import UUID, uuid4
 
-from models import User, SpecSession
-from main import app
+from fastapi.testclient import TestClient
+from sqlmodel import Session
+
 from database import engine
+from main import app
+from models import User
 
 client = TestClient(app)
 
@@ -20,7 +20,7 @@ def test_signup_creates_user():
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["user"]["email"] == "test@example.com"
-    
+
     with Session(engine) as db:
         user = db.get(User, uuid4(data["user"]["id"]) if False else UUID(data["user"]["id"]))
         assert user is not None
@@ -82,7 +82,7 @@ def test_authenticated_session_creation():
     other_resp = client.post("/auth/signup", json={"email": "other@example.com", "password": "password123"})
     other_token = other_resp.json()["access_token"]
     other_headers = {"Authorization": f"Bearer {other_token}"}
-    
+
     get_resp2 = client.get(f"/sessions/{session_id}", headers=other_headers)
     assert get_resp2.status_code == 403
 
@@ -97,7 +97,7 @@ def test_claim_session_on_signup():
     auth_resp = client.post(
         "/auth/signup",
         json={
-            "email": "claimer@example.com", 
+            "email": "claimer@example.com",
             "password": "password123",
             "claim_session_id": session_id
         }

@@ -1,15 +1,14 @@
 """Tests for risk_service business logic."""
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from database import engine
-from models import Risk, RiskComment, RiskStatus, SpecSession, User, AnalysisRun
+from models import Risk, RiskStatus, SpecSession
 from risk_service import (
-    upsert_risks_from_findings,
     backfill_risks_for_session,
     get_risk_summary,
+    upsert_risks_from_findings,
     validate_status_transition,
 )
 

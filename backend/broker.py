@@ -7,7 +7,8 @@ import os
 from uuid import UUID
 
 from redis import asyncio as redis
-from redis.exceptions import ConnectionError, TimeoutError as RedisTimeoutError
+from redis.exceptions import ConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 QUEUE_NAME = os.getenv("ANALYSIS_QUEUE_NAME", "specadversary:analysis-runs")
 EVENT_CHANNEL_PREFIX = os.getenv("RUN_EVENT_CHANNEL_PREFIX", "specadversary:run-events:")

@@ -1,12 +1,10 @@
-from logging.config import fileConfig
 import os
+from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
+from sqlmodel import SQLModel
 
 from alembic import context
-from sqlmodel import SQLModel
-import models # Make sure models are imported so SQLModel metadata is populated
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -14,10 +12,11 @@ config = context.config
 
 # Override sqlalchemy.url with environment variable if present
 from dotenv import load_dotenv
+
 load_dotenv()
 database_url = os.environ.get("DATABASE_URL", "sqlite:///spec_adversary.db")
 if database_url:
-    # Ensure psycopg2 is used for asyncpg/postgresql schemas if needed, 
+    # Ensure psycopg2 is used for asyncpg/postgresql schemas if needed,
     # but here we just pass the URL straight through.
     config.set_main_option("sqlalchemy.url", database_url)
 

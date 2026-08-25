@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from database import engine
-from models import Risk, RiskComment, RiskStatus, SpecSession
+from models import Risk, RiskStatus, SpecSession
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ def get_risk_summary(session_id: UUID) -> dict:
         by_status[r.status] = by_status.get(r.status, 0) + 1
         if r.severity:
             by_severity[r.severity] = by_severity.get(r.severity, 0) + 1
-        
+
         due = r.due_date.replace(tzinfo=timezone.utc) if r.due_date and r.due_date.tzinfo is None else r.due_date
         if due and due < now and r.status not in ("resolved", "dismissed"):
             overdue += 1

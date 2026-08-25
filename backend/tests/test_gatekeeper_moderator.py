@@ -1,4 +1,7 @@
-from models import ParsedSpec
+import asyncio
+from types import SimpleNamespace
+from uuid import uuid4
+
 from graph import (
     competitor_completion_message,
     compute_missing_context,
@@ -6,10 +9,7 @@ from graph import (
     preserve_moderated_identity,
 )
 from main import restart_pipeline_args, session_snapshot_events
-from models import SessionStatus, SpecSession
-from uuid import uuid4
-import asyncio
-from types import SimpleNamespace
+from models import ParsedSpec, SessionStatus, SpecSession
 
 
 def finding(identifier: str, **overrides):

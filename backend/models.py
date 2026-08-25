@@ -1,11 +1,15 @@
 from __future__ import annotations
+
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
+
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from sqlalchemy import Column, JSON, UniqueConstraint
-from sqlmodel import Field as SQLField, SQLModel
+from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlmodel import Field as SQLField
+from sqlmodel import SQLModel
+
 
 class Critic(str, Enum):
     assumption = "assumption"

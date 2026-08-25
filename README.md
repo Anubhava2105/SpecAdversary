@@ -18,17 +18,20 @@ Users provide a raw product thesis or technical specification. The system then e
 ## System Architecture
 
 ### Frontend
+
 - **Framework:** React 18, TypeScript, Vite
 - **Routing & State:** React Router DOM, React Context API
 - **Design:** Dark-mode, 3-column layout optimized for real-time WebSocket data consumption
 
 ### Backend
+
 - **Framework:** Python 3.12, FastAPI
 - **Orchestration:** LangGraph (Multi-agent state management)
 - **LLM Integration:** OpenRouter (OpenAI-compatible API supporting JSON mode and Structured Outputs)
 - **Database & Security:** SQLModel (SQLite/PostgreSQL), Passlib (Bcrypt hashing), Python-JOSE (JWT handling)
 
 ### Deployment
+
 - **Containerization:** Docker & Docker Compose
 
 ## Repository Structure
@@ -66,6 +69,7 @@ SpecAdversary/
 ### Installation (Docker)
 
 1. **Clone the repository:**
+
    ```bash
    git clone <repository-url>
    cd SpecAdversary
@@ -73,6 +77,7 @@ SpecAdversary/
 
 2. **Configure Environment:**
    Create a `.env` file in the `backend/` directory:
+
    ```env
    OPENAI_BASE_URL=https://openrouter.ai/api/v1
    OPENAI_API_KEY=your_key_here
@@ -81,6 +86,7 @@ SpecAdversary/
    ```
 
 3. **Run the services:**
+
    ```bash
    docker compose up --build
    ```
@@ -93,6 +99,7 @@ SpecAdversary/
 If you prefer to run the services outside of Docker for development:
 
 **Backend Setup:**
+
 ```bash
 cd backend
 python -m venv .venv
@@ -105,6 +112,7 @@ uvicorn main:app --reload
 ```
 
 **Frontend Setup:**
+
 ```bash
 cd frontend
 npm install
@@ -112,6 +120,7 @@ npm run dev
 ```
 
 **Testing:**
+
 ```bash
 cd backend
 python -m pytest tests/ -v

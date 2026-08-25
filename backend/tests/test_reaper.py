@@ -1,4 +1,5 @@
 """Tests for the stuck-run reaper."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -7,8 +8,6 @@ from sqlmodel import Session, select
 import pipeline_runner
 from database import engine
 from models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
-import asyncio
-
 from pipeline_runner import reap_stuck_runs
 
 
