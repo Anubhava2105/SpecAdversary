@@ -1,7 +1,7 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { AuthProvider } from './AuthContext';
 import AdversaryApp from './pages/AdversaryApp';
 import { LandingPage } from './pages/LandingPage';
-import { AuthProvider } from './AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { OAuthCallback } from './pages/OAuthCallback';
 

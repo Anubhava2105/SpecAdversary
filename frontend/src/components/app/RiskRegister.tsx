@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import {
-  Shield, AlertTriangle, CheckCircle, Clock, User, Search,
-  ChevronRight, X, RefreshCw, MessageSquare, Calendar, Target
+import {AlertTriangle, Calendar, CheckCircle, 
+  ChevronRight, Clock, MessageSquare, RefreshCw, Search,
+  Shield, Target, User, X 
 } from 'lucide-react';
-import type { Risk, RiskStatus, RiskSummary, RiskComment } from '../../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Risk, RiskComment, RiskStatus, RiskSummary } from '../../types';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 

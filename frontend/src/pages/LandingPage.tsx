@@ -1,12 +1,12 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { HeroSection } from '../components/landing/HeroSection';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { DossierSection } from '../components/landing/DossierSection';
+import { HeroSection } from '../components/landing/HeroSection';
 import { WorkflowSection } from '../components/landing/WorkflowSection';
 import '../styles/landing.css';
-import { GitBranch, FileText } from 'lucide-react';
+import { FileText, GitBranch } from 'lucide-react';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -14,7 +14,7 @@ export function LandingPage() {
   const headerRef = useRef<HTMLElement>(null);
 
   useLayoutEffect(() => {
-    let ctx = gsap.context(() => {
+    const ctx = gsap.context(() => {
       // Frosted glass transition on scroll
       ScrollTrigger.create({
         start: 'top -50',

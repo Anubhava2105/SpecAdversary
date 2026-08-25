@@ -1,10 +1,11 @@
-import { useState } from 'react';
 import { diffWords } from 'diff';
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Finding } from '../../types';
 
 const safeText = (value: string) =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitiser stripping control characters
   value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 
 export function ReportView({

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { SessionSummary } from '../../types';
-import { useAuth } from '../../AuthContext';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../AuthContext';
+import type { SessionSummary } from '../../types';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -38,6 +38,7 @@ export function Sidebar({
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const { user, token, logout } = useAuth();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is an out-of-band reload signal, intentionally not referenced in the body
   useEffect(() => {
     fetch(`${API}/sessions`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},

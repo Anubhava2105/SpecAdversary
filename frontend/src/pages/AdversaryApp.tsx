@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { SpecInput } from "../components/app/SpecInput";
+import { Group, Panel, Separator } from "react-resizable-panels";
+import { Link } from "react-router-dom";
+import { useAuth } from "../AuthContext";
 import { LiveFeed } from "../components/app/LiveFeed";
 import { ReportView } from "../components/app/ReportView";
 import { RiskRegister } from "../components/app/RiskRegister";
 import { Sidebar } from "../components/app/Sidebar";
-import { Group, Panel, Separator } from "react-resizable-panels";
-import type { Finding, Session, Critic } from "../types";
-import { useAuth } from "../AuthContext";
-import { Link } from "react-router-dom";
+import { SpecInput } from "../components/app/SpecInput";
+import type { Critic, Finding, Session } from "../types";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const WS_BASE = API.replace("http", "ws");
@@ -145,6 +145,7 @@ export default function App() {
     }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconnects are keyed to id/token only; authHeaders is stable and would retrigger the socket
   useEffect(() => {
     if (!id) return;
 
@@ -233,6 +234,7 @@ export default function App() {
   }, [id, token]);
 
   // Restore session from URL on initial load
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately runs once on mount, not on every loadSession identity change
   useEffect(() => {
     const existing = new URLSearchParams(location.search).get("session");
     if (existing) loadSession(existing);

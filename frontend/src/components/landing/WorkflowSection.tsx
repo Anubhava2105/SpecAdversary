@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { useLayoutEffect, useRef } from 'react';
 
 gsap.registerPlugin(ScrollTrigger);
-import { Upload, Zap, CheckCircle } from 'lucide-react';
+
+import { CheckCircle, Upload, Zap } from 'lucide-react';
 
 export function WorkflowSection() {
   const containerRef = useRef<HTMLElement>(null);
@@ -12,7 +13,7 @@ export function WorkflowSection() {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReducedMotion) return;
 
-    let ctx = gsap.context(() => {
+    const ctx = gsap.context(() => {
       const lines = gsap.utils.toArray('.transcript-line');
       
       const tl = gsap.timeline({

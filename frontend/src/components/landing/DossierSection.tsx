@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { useLayoutEffect, useRef } from 'react';
 
 gsap.registerPlugin(ScrollTrigger);
-import { Search, Swords, Diamond, Settings, Shield, Scale, Target } from 'lucide-react';
+
+import { Diamond, Scale, Search, Settings, Shield, Swords, Target } from 'lucide-react';
 
 const CRITICS = [
   { id: 'assumption', title: 'Assumption Hunter', desc: 'Flags unverified claims masquerading as facts.', Icon: Search },
@@ -23,7 +24,7 @@ export function DossierSection() {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReducedMotion) return;
 
-    let ctx = gsap.context(() => {
+    const ctx = gsap.context(() => {
       // Entrance stagger using ScrollTrigger batch
       gsap.set('.dossier-item', { opacity: 0, x: -30 });
       ScrollTrigger.batch('.dossier-item', {

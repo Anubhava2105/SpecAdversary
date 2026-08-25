@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import type { Finding, Critic } from '../../types';
 import { ChevronRight, CornerDownRight } from 'lucide-react';
+import { useState } from 'react';
+import type { Critic, Finding } from '../../types';
 
 const labels: Record<Critic, string> = {
   assumption: 'Assumption Hunter',
@@ -13,6 +13,7 @@ const labels: Record<Critic, string> = {
 };
 
 const safeText = (value: string) =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitiser stripping control characters
   value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 
 function CriticTimeline({

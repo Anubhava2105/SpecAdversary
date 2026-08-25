@@ -384,9 +384,8 @@ h2 {
 
 .inline-diff {
   white-space: pre-wrap;
-  line-height: 1.65;
   padding: 12px 14px;
-  font: 12px/1.6 'DM Mono';
+  font: 12px/1.65 'DM Mono';
   color: var(--text-secondary);
 }
 

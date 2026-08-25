@@ -1,5 +1,5 @@
+import { Diamond, Scale, Search, Settings, Shield, Swords, Target } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { Search, Swords, Diamond, Settings, Shield, Scale, Target } from 'lucide-react';
 import type { Critic } from '../../types';
 import { Checkbox, Select } from './FormComponents';
 

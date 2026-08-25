@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import gsap from 'gsap';
 import { ChevronRight } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 
 export function HeroSection() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -11,7 +11,7 @@ export function HeroSection() {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReducedMotion) return;
 
-    let ctx = gsap.context(() => {
+    const ctx = gsap.context(() => {
       const tl = gsap.timeline();
       
       tl.fromTo('.hero-word', 
