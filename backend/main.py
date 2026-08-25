@@ -29,6 +29,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, text
 from sqlmodel import Session, col, select
 
+import lifecycle
 from auth import (
     GITHUB_CLIENT_ID,
     GOOGLE_CLIENT_ID,
@@ -533,7 +534,7 @@ async def reply_to_finding(request: Request, sid: UUID, fid: str, payload: Reply
             raise HTTPException(404, "Session not found")
         if not _can_access_session(row, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-        if row.status not in (SessionStatus.done, SessionStatus.failed):
+        if not lifecycle.accepts_client_activity(row.status):
             raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 
         finding_dict = next((f for f in row.findings if f.get("id") == fid), None)
@@ -1053,7 +1054,7 @@ async def re_evaluate_risk(request: Request, rid: UUID, user: User | None = Depe
         session_row = db.get(SpecSession, risk.session_id)
         if not session_row or not _can_access_session(session_row, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-        if session_row.status in (SessionStatus.parsing, SessionStatus.critiquing, SessionStatus.moderating, SessionStatus.synthesizing):
+        if not lifecycle.accepts_client_activity(session_row.status):
             raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 
         if not risk.finding_id:
