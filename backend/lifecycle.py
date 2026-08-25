@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from models import AnalysisRun, RunStatus, SessionStatus
+from models import RunStatus, SessionStatus
 
 
 class IllegalTransition(Exception):
@@ -93,18 +93,20 @@ def transition_run(
     run,
     to: RunStatus,
     cascade_session=None,
+    at: datetime | None = None,
     **extra_fields,
 ) -> list[dict[str, str]]:
     """Move a run to *to*; optionally cascade failure into its session.
 
     Sets started_at when entering `running` and finished_at on any terminal
-    status. When *cascade_session* is given and the run fails, the session is
-    also moved to failed — but only while it is still in flight, so reaping a
-    stale orphaned run never corrupts a session that already finished.
-    Returns the status events a caller should publish (run cascades included).
+    status (both derived from *at*, defaulting to now — callers with an
+    injected clock pass it through). When *cascade_session* is given and the
+    run fails, the session is also moved to failed — but only while it is
+    still in flight, so reaping a stale orphaned run never corrupts a session
+    that already finished. Returns the status events a caller should publish.
     """
+    now = at or datetime.now(timezone.utc)
     run.status = to
-    now = datetime.now(timezone.utc)
     if to is RunStatus.running:
         run.started_at = now
     if to in _TERMINAL_RUN_STATUSES:
@@ -125,6 +127,11 @@ def _session_transition_legal(current: SessionStatus, to: SessionStatus) -> bool
         return True  # idempotent write
     if to is SessionStatus.failed:
         return True  # anything can fail
+    # An analysis that finishes successfully marks the session done from
+    # whichever stage it reached: short pipelines (e.g. the stub flow) complete
+    # without visiting every critic stage.
+    if current in _IN_FLIGHT and to is SessionStatus.done:
+        return True
     if to in _FORWARD.get(current, set()):
         return True  # forward stage progression
     if current in (SessionStatus.done, SessionStatus.failed) and to is SessionStatus.parsing:

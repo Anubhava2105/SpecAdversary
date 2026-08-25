@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+import lifecycle
 from broker import publish_event
 from database import engine
 from graph import spec_graph
@@ -81,15 +82,19 @@ async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
                 continue
 
             code = "run_stalled" if stalled else "run_timeout"
-            run.status = RunStatus.failed
-            run.error_code = code
-            run.error_message = "Analysis interrupted. Please try again."
-            run.finished_at = now
-            db.add(run)
-
             session = db.get(SpecSession, run.session_id)
+            # The lifecycle cascade only flips in-flight sessions, so a stale
+            # orphaned run reaped after its session finished can't corrupt it.
+            lifecycle.transition_run(
+                run,
+                RunStatus.failed,
+                cascade_session=session,
+                at=now,
+                error_code=code,
+                error_message="Analysis interrupted. Please try again.",
+            )
+            db.add(run)
             if session is not None:
-                session.status = SessionStatus.failed
                 db.add(session)
 
             logger.warning("Reaped %s run %s (idle=%ds age=%ds)", code, run.id, idle_seconds, age_seconds)
@@ -114,15 +119,40 @@ def update_session(session_id: UUID, **values) -> None:
         db.commit()
 
 
-def update_run(run_id: UUID, **values) -> None:
+def _apply_session_transition(session_id: UUID, to: SessionStatus, **values) -> list[dict]:
+    """Load a session, move it through the lifecycle, commit.
+
+    Illegal moves are logged and skipped rather than crashing the run — the
+    stream may legitimately deliver duplicate or late status events.
+    """
     with Session(engine) as db:
-        row = db.get(AnalysisRun, run_id)
+        row = db.get(SpecSession, session_id)
         if row is None:
-            return
-        for key, value in values.items():
-            setattr(row, key, value)
+            return []
+        try:
+            events = lifecycle.transition_session(row, to, **values)
+        except lifecycle.IllegalTransition:
+            logger.warning("Skipped illegal session %s transition to %s", session_id, to.value)
+            return []
         db.add(row)
         db.commit()
+        return events
+
+
+def _apply_run_transition(run_id: UUID, to: RunStatus, cascade: bool = False, at=None, **values) -> list[dict]:
+    """Load a run, move it through the lifecycle, commit; optionally cascade
+    failure into its session (see lifecycle.transition_run)."""
+    with Session(engine) as db:
+        run = db.get(AnalysisRun, run_id)
+        if run is None:
+            return []
+        cascade_session = db.get(SpecSession, run.session_id) if cascade else None
+        events = lifecycle.transition_run(run, to, cascade_session=cascade_session, at=at, **values)
+        db.add(run)
+        if cascade_session is not None:
+            db.add(cascade_session)
+        db.commit()
+        return events
 
 
 async def execute_run(run_id: UUID) -> None:
@@ -133,16 +163,13 @@ async def execute_run(run_id: UUID) -> None:
             return
         session = db.get(SpecSession, run.session_id)
         if session is None:
-            run.status = RunStatus.failed
-            run.error_code = "session_missing"
-            run.finished_at = datetime.now(timezone.utc)
+            lifecycle.transition_run(run, RunStatus.failed, error_code="session_missing")
             db.add(run)
             db.commit()
             return
-        run.status = RunStatus.running
+        lifecycle.transition_run(run, RunStatus.running)
         run.attempt += 1
-        run.started_at = datetime.now(timezone.utc)
-        session.status = SessionStatus.parsing
+        lifecycle.transition_session(session, SessionStatus.parsing)
         db.add(run)
         db.add(session)
         db.commit()
@@ -171,8 +198,13 @@ async def execute_run(run_id: UUID) -> None:
             async for mode, data in spec_graph.astream(initial_state, stream_mode=["custom", "updates"]):
                 if mode == "custom" and isinstance(data, dict):
                     await emit_event(run_id, data)
-                    if data.get("type") == "status" and data.get("status") in SessionStatus._value2member_map_:
-                        update_session(session_id, status=SessionStatus(data["status"]))
+                    if data.get("type") == "status":
+                        try:
+                            next_status = lifecycle.ingest_status(data.get("status"))
+                        except ValueError:
+                            logger.warning("Ignoring unknown pipeline status event: %r", data.get("status"))
+                        else:
+                            _apply_session_transition(session_id, next_status)
                 elif mode == "updates" and isinstance(data, dict):
                     for update in data.values():
                         if not isinstance(update, dict):
@@ -193,41 +225,44 @@ async def execute_run(run_id: UUID) -> None:
         await asyncio.wait_for(stream(), timeout=PIPELINE_TIMEOUT_SECONDS)
         revised_spec = final.get("revised_spec", raw_spec)
         findings = final.get("moderated_findings", final.get("findings", []))
-        update_session(session_id, findings=findings, revised_spec=revised_spec, status=SessionStatus.done)
+        _apply_session_transition(session_id, SessionStatus.done, findings=findings, revised_spec=revised_spec)
         # Upsert normalized risk rows from the final findings
         try:
             upsert_risks_from_findings(session_id, findings, run_id)
         except Exception:
             logger.exception("Risk upsert failed for run %s (non-fatal)", run_id)
-        update_run(run_id, status=RunStatus.succeeded, finished_at=datetime.now(timezone.utc))
+        _apply_run_transition(run_id, RunStatus.succeeded)
         await emit_event(run_id, {"type": "done", "revised_spec": revised_spec})
     except BudgetExceeded as exc:
         logger.warning("Run %s stopped: %s", run_id, exc)
-        update_session(session_id, status=SessionStatus.failed)
-        update_run(
+        error_message = "Analysis exceeded its processing budget. Please try again."
+        events = _apply_run_transition(
             run_id,
-            status=RunStatus.failed,
+            RunStatus.failed,
+            cascade=True,
             error_code="budget_exceeded",
-            error_message="Analysis exceeded its processing budget. Please try again.",
-            finished_at=datetime.now(timezone.utc),
+            error_message=error_message,
         )
-        await emit_event(run_id, {"type": "error", "message": "Analysis exceeded its processing budget.", "code": "budget_exceeded"})
-        await emit_event(run_id, {"type": "status", "status": SessionStatus.failed.value})
+        await emit_event(run_id, {"type": "error", "message": error_message, "code": "budget_exceeded"})
+        for event in events:
+            await emit_event(run_id, event)
     except asyncio.CancelledError:
-        update_run(run_id, status=RunStatus.cancelled, finished_at=datetime.now(timezone.utc))
+        _apply_run_transition(run_id, RunStatus.cancelled)
         await emit_event(run_id, {"type": "error", "message": "Analysis cancelled.", "code": "cancelled"})
         raise
     except Exception:
         logger.exception("Pipeline failed for run %s", run_id)
-        update_session(session_id, status=SessionStatus.failed)
-        update_run(
+        error_message = "Analysis failed. Please try again."
+        events = _apply_run_transition(
             run_id,
-            status=RunStatus.failed,
+            RunStatus.failed,
+            cascade=True,
             error_code="pipeline_failed",
-            error_message="Analysis failed. Please try again.",
-            finished_at=datetime.now(timezone.utc),
+            error_message=error_message,
         )
-        await emit_event(run_id, {"type": "error", "message": "Analysis failed. Please try again.", "code": "pipeline_failed"})
+        await emit_event(run_id, {"type": "error", "message": error_message, "code": "pipeline_failed"})
+        for event in events:
+            await emit_event(run_id, event)
     finally:
         used = end_token_budget()
         if used:

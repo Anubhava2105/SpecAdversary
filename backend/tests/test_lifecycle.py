@@ -3,6 +3,8 @@
 The lifecycle is the single owner of legal status movement. These tests drive
 it through its interface with plain ORM objects — no database, no engine.
 """
+import uuid
+
 import pytest
 
 from lifecycle import (
@@ -13,8 +15,6 @@ from lifecycle import (
     transition_run,
     transition_session,
 )
-import uuid
-
 from models import AnalysisRun, RunStatus, SessionStatus
 
 
@@ -49,8 +49,8 @@ def test_session_transition_table(frm, to):
     legal = frm == to  # idempotent writes are always legal
     legal |= to == SessionStatus.failed  # any state can fail
     legal |= to in FORWARD.get(frm, [])  # forward stage progression
+    legal |= to == SessionStatus.done and frm in IN_FLIGHT  # completion from whichever stage the run reached
     legal |= frm in (SessionStatus.done, SessionStatus.failed) and to == SessionStatus.parsing  # re-evaluate / retry
-    legal |= frm == SessionStatus.parsing and to == SessionStatus.parsing  # worker claim re-asserts parsing
 
     if legal:
         events = transition_session(session, to)
@@ -113,6 +113,16 @@ def test_successful_run_does_not_cascade():
     session = _session(SessionStatus.synthesizing)
     transition_run(run, RunStatus.succeeded, cascade_session=session)
     assert session.status == SessionStatus.synthesizing  # success path sets `done` explicitly itself
+
+
+def test_transition_run_honours_injected_clock():
+    from datetime import datetime, timezone
+
+    stamp = datetime(2026, 8, 25, tzinfo=timezone.utc)
+    run = make_run(RunStatus.running)
+    run.started_at = stamp
+    transition_run(run, RunStatus.failed, at=stamp)
+    assert run.finished_at == stamp
 
 
 def test_status_events_shapes_publication_payloads():
