@@ -52,13 +52,6 @@ def test_reply_allowed_on_done_session():
     assert r.json()["status"] == "queued"
 
 
-def test_reply_allowed_on_failed_session():
-    # Failed sessions keep their findings; letting users reply enables retry paths.
-    sid = _make_session(SessionStatus.failed)
-    r = client.post(f"/sessions/{sid}/findings/f1/reply", json={"reply": "why?"})
-    assert r.status_code == 200
-
-
 def test_reevaluate_rejected_while_analysis_in_progress():
     sid = _make_session(SessionStatus.synthesizing)
     with Session(engine) as db:

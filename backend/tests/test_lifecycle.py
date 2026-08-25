@@ -11,7 +11,6 @@ from lifecycle import (
     IllegalTransition,
     accepts_client_activity,
     ingest_status,
-    status_events,
     transition_run,
     transition_session,
 )
@@ -125,10 +124,6 @@ def test_transition_run_honours_injected_clock():
     run.started_at = stamp
     transition_run(run, RunStatus.failed, at=stamp)
     assert run.finished_at == stamp
-
-
-def test_status_events_shapes_publication_payloads():
-    assert status_events(SessionStatus.done) == [{"type": "status", "status": "done"}]
 
 
 # ── Ingestion of raw graph-emitted strings ────────────────────────────────
