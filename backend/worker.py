@@ -5,9 +5,10 @@ import asyncio
 import logging
 
 from broker import dequeue_run
+from logging_config import setup_logging
 from pipeline_runner import execute_run, reap_stuck_runs
 
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 REAP_INTERVAL_SECONDS = 60

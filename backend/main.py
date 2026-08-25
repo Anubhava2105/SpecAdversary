@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -8,34 +9,60 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from uuid import UUID
+
 from dotenv import load_dotenv
+
 load_dotenv()
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status, Depends, Query
+
+from logging_config import setup_logging  # noqa: E402
+
+setup_logging()
+from typing import Any
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy import func, text
-from sqlmodel import Session, select
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, EmailStr, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from database import create_db_and_tables, engine
-from models import AnalysisRun, Critic, DailyUsage, Risk, RiskComment, RiskStatus, RunEvent, RunStatus, SessionStatus, SpecSession, User
+from sqlalchemy import func, text
+from sqlmodel import Session, col, select
+
+from auth import (
+    GITHUB_CLIENT_ID,
+    GOOGLE_CLIENT_ID,
+    create_access_token,
+    create_refresh_token,
+    create_websocket_ticket,
+    decode_token,
+    exchange_github_code,
+    exchange_google_code,
+    get_current_user,
+    get_optional_user,
+    hash_password,
+    revoke_user_refresh_tokens,
+    rotate_refresh_token,
+    verify_password,
+)
+from broker import client as redis_client
 from broker import enqueue_run, subscribe_run
+from database import engine
+from models import (
+    AnalysisRun,
+    Critic,
+    Risk,
+    RiskComment,
+    RiskStatus,
+    RunEvent,
+    SessionStatus,
+    SpecSession,
+    User,
+)
 from pipeline_runner import execute_run
 from risk_service import (
-    backfill_risks_for_session,
     get_risk_summary,
-    upsert_risks_from_findings,
     validate_status_transition,
-)
-from auth import (
-    hash_password, verify_password,
-    create_access_token, create_refresh_token, create_websocket_ticket, decode_token,
-    get_optional_user, get_current_user,
-    revoke_user_refresh_tokens, rotate_refresh_token,
-    exchange_google_code, exchange_github_code,
-    GOOGLE_CLIENT_ID, GITHUB_CLIENT_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,7 +137,6 @@ class SecurityHeadersMiddleware:
 
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
-                headers = dict(message.get("headers", []))
                 extra = [
                     (b"x-content-type-options", b"nosniff"),
                     (b"x-frame-options", b"DENY"),
@@ -130,7 +156,6 @@ class SecurityHeadersMiddleware:
 @asynccontextmanager
 async def lifespan(app):
     validate_production_config()
-    create_db_and_tables()
     reaper_task = asyncio.create_task(_reaper_loop())
     yield
     reaper_task.cancel()
@@ -147,7 +172,7 @@ async def _reaper_loop() -> None:
             logger.exception("Stuck-run sweep failed")
 app=FastAPI(title="Spec Adversary",lifespan=lifespan, docs_url=None if os.environ.get("ENV") == "production" else "/docs")
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(ALLOWED_ORIGINS),
@@ -156,6 +181,32 @@ app.add_middleware(
     allow_credentials=True,
 )
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.get("/healthz")
+async def healthz():
+    """Liveness + dependency readiness: DB and Redis must answer to serve traffic."""
+    checks: dict[str, str] = {}
+    try:
+        with Session(engine) as db:
+            db.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as exc:
+        logger.warning("Health check: database unreachable", exc_info=True)
+        checks["db"] = f"error: {type(exc).__name__}"
+
+    try:
+        await redis_client().ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        logger.warning("Health check: redis unreachable", exc_info=True)
+        checks["redis"] = f"error: {type(exc).__name__}"
+
+    healthy = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"status": "ok" if healthy else "degraded", **checks},
+    )
 
 
 # ── Auth payloads ──────────────────────────────────────────────────────────
@@ -353,8 +404,8 @@ async def _oauth_upsert(provider: str, provider_id: str, email: str, display_nam
                     session_row.user_id = user.id
                     db.add(session_row)
                     db.commit()
-            except (ValueError, Exception):
-                pass
+            except Exception:
+                logger.warning("Guest-session claim failed for %s", claim_session_id, exc_info=True)
 
         return {
             "access_token": create_access_token(user.id),
@@ -395,7 +446,7 @@ def reserve_daily_session(user: User | None = None) -> None:
         day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         with Session(engine) as db:
             created_today = db.exec(
-                select(func.count(SpecSession.id)).where(
+                select(func.count(col(SpecSession.id))).where(
                     SpecSession.user_id == user.id,
                     SpecSession.created_at >= day_start,
                 )
@@ -463,7 +514,7 @@ async def create_session(request: Request, payload: CreateSession, user: User | 
         db.add(run)
         db.commit()
         db.refresh(run)
-        
+
         row_id = row.id
         run_id = run.id
 
@@ -512,7 +563,7 @@ async def list_sessions(request: Request, user: User | None = Depends(get_option
             rows = db.exec(
                 select(SpecSession)
                 .where(SpecSession.user_id == user.id)
-                .order_by(SpecSession.created_at.desc())
+                .order_by(col(SpecSession.created_at).desc())
             ).all()
         else:
             # Guests see no history (their sessions are ephemeral)
@@ -530,8 +581,10 @@ async def list_sessions(request: Request, user: User | None = Depends(get_option
 @app.get("/sessions/{sid}")
 @limiter.limit("30/minute")
 async def get_session(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
-    with Session(engine) as db: row=db.get(SpecSession,sid)
-    if not row: raise HTTPException(404,"Session not found")
+    with Session(engine) as db:
+        row = db.get(SpecSession, sid)
+    if row is None:
+        raise HTTPException(404, "Session not found")
     if not _can_access_session(row, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     return row
@@ -588,19 +641,20 @@ async def stream_session(ws: WebSocket, sid: UUID):
             for event in session_snapshot_events(row):
                 await ws.send_json(event)
         await _stream_run_events(ws, sid)
-    except (WebSocketDisconnect, asyncio.CancelledError): pass
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass  # client went away or the socket was torn down — nothing to clean up
 
 
 def _latest_run_id(db: Session, sid: UUID) -> UUID | None:
     latest = db.exec(
-        select(AnalysisRun).where(AnalysisRun.session_id == sid).order_by(AnalysisRun.created_at.desc())
+        select(AnalysisRun).where(AnalysisRun.session_id == sid).order_by(col(AnalysisRun.created_at).desc())
     ).first()
     return latest.id if latest else None
 
 
 def _events_after(db: Session, run_id: UUID, after_sequence: int):
     return db.exec(
-        select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.sequence > after_sequence).order_by(RunEvent.sequence)
+        select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.sequence > after_sequence).order_by(col(RunEvent.sequence))
     ).all()
 
 
@@ -638,7 +692,7 @@ async def _close_pubsub(pubsub) -> None:
     try:
         await pubsub.aclose()
     except Exception:
-        pass
+        logger.warning("Failed to close pub/sub connection", exc_info=True)
 
 
 async def _stream_run_events(ws: WebSocket, sid: UUID) -> None:
@@ -799,8 +853,8 @@ async def list_risks(
         if not _can_access_session(session_row, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-        # Lazy backfill for legacy sessions
-        backfill_risks_for_session(sid)
+        # Legacy sessions are migrated once by scripts/backfill_risks.py; this
+        # endpoint no longer pays for a backfill probe on every request.
 
         query = select(Risk).where(Risk.session_id == sid)
         if status_filter:
@@ -810,22 +864,21 @@ async def list_risks(
         if critic:
             query = query.where(Risk.critic == critic)
         if search:
-            query = query.where(Risk.claim.contains(search))
+            query = query.where(col(Risk.claim).contains(search))
 
         # Sorting
-        SORT_COLUMNS = {
-            "severity": Risk.severity,
-            "created_at": Risk.created_at,
-            "updated_at": Risk.updated_at,
-            "due_date": Risk.due_date,
-            "status": Risk.status,
+        SORT_COLUMNS: dict[str, Any] = {
+            "severity": col(Risk.severity),
+            "created_at": col(Risk.created_at),
+            "updated_at": col(Risk.updated_at),
+            "due_date": col(Risk.due_date),
+            "status": col(Risk.status),
         }
-        sort_col = SORT_COLUMNS.get(sort_by, Risk.severity)
+        sort_col = SORT_COLUMNS.get(sort_by, col(Risk.severity))
         query = query.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
 
-        all_risks = db.exec(query).all()
-        total = len(all_risks)
-        paginated = all_risks[offset : offset + limit]
+        total = db.exec(select(func.count()).select_from(query.subquery())).one()
+        paginated = db.exec(query.offset(offset).limit(limit)).all()
 
         items = [_risk_to_response(r) for r in paginated]
 
@@ -843,7 +896,6 @@ async def risk_summary(request: Request, sid: UUID, user: User | None = Depends(
         if not _can_access_session(session_row, user):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-        backfill_risks_for_session(sid)
         summary = get_risk_summary(sid)
 
     return RiskSummaryResponse(**summary)
@@ -861,19 +913,21 @@ async def get_risk_detail(request: Request, rid: UUID, user: User | None = Depen
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
         comments_rows = db.exec(
-            select(RiskComment).where(RiskComment.risk_id == rid).order_by(RiskComment.created_at)
+            select(RiskComment).where(RiskComment.risk_id == rid).order_by(col(RiskComment.created_at))
         ).all()
+        # One batched lookup instead of a per-comment author fetch (N+1).
+        author_ids = {c.author_id for c in comments_rows if c.author_id}
+        emails: dict[UUID, str] = {}
+        if author_ids:
+            authors = db.exec(select(User).where(col(User.id).in_(author_ids))).all()
+            emails = {a.id: a.email for a in authors}
         comments = []
         for c in comments_rows:
-            author_email = None
-            if c.author_id:
-                author = db.get(User, c.author_id)
-                author_email = author.email if author else None
             comments.append(RiskCommentResponse(
                 id=str(c.id),
                 risk_id=str(c.risk_id),
                 author_id=str(c.author_id) if c.author_id else None,
-                author_email=author_email,
+                author_email=emails.get(c.author_id) if c.author_id else None,
                 body=c.body,
                 created_at=c.created_at.isoformat(),
             ))
@@ -1013,3 +1067,5 @@ async def re_evaluate_risk(request: Request, rid: UUID, user: User | None = Depe
 
     await dispatch_run(run_id)
     return {"status": "queued", "run_id": str(run_id)}
+
+
