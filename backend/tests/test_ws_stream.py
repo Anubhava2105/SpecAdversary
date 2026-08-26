@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+import deps
 import main
 from database import engine
 from models import AnalysisRun, RunEvent, RunStatus, SpecSession
 
-main.dispatch_run = lambda run_id: asyncio.sleep(0)
+deps.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)
 
 
