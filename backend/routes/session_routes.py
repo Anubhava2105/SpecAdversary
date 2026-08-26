@@ -74,11 +74,7 @@ async def create_session(request: Request, payload: CreateSession, user: User | 
 async def reply_to_finding(request: Request, sid: UUID, fid: str, payload: ReplyPayload, user: User | None = Depends(get_optional_user)):
     from sqlalchemy.orm.attributes import flag_modified
     with Session(engine) as db:
-        row = db.get(SpecSession, sid)
-        if not row:
-            raise HTTPException(404, "Session not found")
-        if not deps.can_access_session(row, user):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        row = deps.require_session_access(db, sid, user)
         if not lifecycle.accepts_client_activity(row.status):
             raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 
@@ -128,20 +124,12 @@ async def list_sessions(request: Request, user: User | None = Depends(get_option
 @deps.limiter.limit("30/minute")
 async def get_session(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        row = db.get(SpecSession, sid)
-    if row is None:
-        raise HTTPException(404, "Session not found")
-    if not deps.can_access_session(row, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        row = deps.require_session_access(db, sid, user)
     return row
 
 
 @router.post("/sessions/{sid}/stream-ticket")
 async def create_stream_ticket(sid: UUID, user: User = Depends(get_current_user)):
     with Session(engine) as db:
-        row = db.get(SpecSession, sid)
-    if not row:
-        raise HTTPException(404, "Session not found")
-    if not deps.can_access_session(row, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        deps.require_session_access(db, sid, user)
     return {"ticket": create_websocket_ticket(user.id)}
