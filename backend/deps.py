@@ -89,6 +89,12 @@ limiter = Limiter(
 )
 inline_tasks: set[asyncio.Task] = set()
 
+def can_access_session(session_row: SpecSession, user: User | None) -> bool:
+    """Guest sessions (user_id=None) are open. Owned sessions require the matching user."""
+    if session_row.user_id is None:
+        return True
+    return user is not None and session_row.user_id == user.id
+
 def reject_prompt_injection(raw_spec: str, client_ip: str) -> None:
     """Reject obvious instruction-override attempts before they reach an LLM."""
     if any(pattern.search(raw_spec) for pattern in INJECTION_PATTERNS):

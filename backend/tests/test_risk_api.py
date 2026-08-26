@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-import main
+import deps
 from database import engine
 from main import app
 from models import Risk, SessionStatus, SpecSession
@@ -12,7 +12,7 @@ from models import Risk, SessionStatus, SpecSession
 # Disable rate limiting for tests
 
 # Mock dispatch_run to avoid redis connection
-main.dispatch_run = lambda run_id: __import__("asyncio").sleep(0)
+deps.dispatch_run = lambda run_id: __import__("asyncio").sleep(0)
 
 client = TestClient(app)
 
