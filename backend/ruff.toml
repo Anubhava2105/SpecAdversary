@@ -11,9 +11,9 @@ ignore = [
 
 [lint.per-file-ignores]
 # main.py imports app modules after load_dotenv(); graph.py after langgraph setup.
-# deps.py owns the shared state and follows the same load-dotenv-first pattern.
+# core/deps.py owns the shared state and follows the same load-dotenv-first pattern.
 "main.py" = ["E402"]
-"deps.py" = ["E402"]
-"graph.py" = ["E402", "E701", "E702"]
+"core/deps.py" = ["E402"]
+"services/graph.py" = ["E402", "E701", "E702"]
 "alembic/env.py" = ["E402"]
 "tests/*" = ["E402"]

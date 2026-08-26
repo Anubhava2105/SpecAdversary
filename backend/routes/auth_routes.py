@@ -11,8 +11,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import Session, select
 
-import deps
-from auth import (
+from core import deps
+from core.auth import (
     GITHUB_CLIENT_ID,
     GOOGLE_CLIENT_ID,
     create_access_token,
@@ -26,8 +26,8 @@ from auth import (
     rotate_refresh_token,
     verify_password,
 )
-from database import engine
-from models import SpecSession, User
+from db.database import engine
+from db.models import SpecSession, User
 
 logger = logging.getLogger(__name__)
 

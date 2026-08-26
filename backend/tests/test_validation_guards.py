@@ -5,10 +5,10 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-import deps
 import main
-from database import engine
-from models import Risk, SessionStatus, SpecSession
+from core import deps
+from db.database import engine
+from db.models import Risk, SessionStatus, SpecSession
 
 deps.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)

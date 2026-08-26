@@ -11,12 +11,12 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlmodel import Session, col, select
 
-import deps
-from auth import decode_token
-from broker import subscribe_run
-from database import engine
-from models import AnalysisRun, RunEvent, SpecSession, User
-from session_routes import session_snapshot_events
+from core import deps
+from core.auth import decode_token
+from core.broker import subscribe_run
+from db.database import engine
+from db.models import AnalysisRun, RunEvent, SpecSession, User
+from routes.session_routes import session_snapshot_events
 
 logger = logging.getLogger(__name__)
 

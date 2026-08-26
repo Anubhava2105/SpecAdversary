@@ -20,8 +20,8 @@ from langgraph.types import Send
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from llm_gateway import completion_message, get_client, stream_completion
-from models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
+from db.models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
+from services.llm_gateway import completion_message, get_client, stream_completion
 
 MAX_LLM_RETRIES = 2
 LLM_TIMEOUT_SECONDS = 30

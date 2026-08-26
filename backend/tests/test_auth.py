@@ -3,9 +3,9 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from database import engine
+from db.database import engine
+from db.models import User
 from main import app
-from models import User
 
 client = TestClient(app)
 

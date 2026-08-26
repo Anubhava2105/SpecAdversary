@@ -7,18 +7,18 @@ import uuid
 
 import pytest
 
-from lifecycle import (
+from db.models import AnalysisRun, RunStatus, SessionStatus
+from services.lifecycle import (
     IllegalTransition,
     accepts_client_activity,
     ingest_status,
     transition_run,
     transition_session,
 )
-from models import AnalysisRun, RunStatus, SessionStatus
 
 
 def _session(status):
-    from models import SpecSession
+    from db.models import SpecSession
 
     return SpecSession(id=uuid.uuid4(), raw_spec="spec", status=status)
 

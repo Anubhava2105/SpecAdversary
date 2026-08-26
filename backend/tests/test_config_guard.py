@@ -1,8 +1,8 @@
 """Tests for the production configuration guard."""
 import pytest
 
-import deps
 import main
+from core import deps
 
 
 def test_dev_environment_never_blocks(monkeypatch):

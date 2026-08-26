@@ -11,8 +11,8 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from database import engine
-from models import Risk, RiskStatus, SpecSession
+from db.database import engine
+from db.models import Risk, RiskStatus, SpecSession
 
 logger = logging.getLogger(__name__)
 

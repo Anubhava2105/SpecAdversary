@@ -24,10 +24,10 @@ from slowapi.util import get_remote_address  # noqa: E402
 from sqlalchemy import func, text  # noqa: E402
 from sqlmodel import Session, col, select  # noqa: E402
 
-from broker import enqueue_run  # noqa: E402
-from database import engine  # noqa: E402
-from models import SpecSession, User  # noqa: E402
-from pipeline_runner import execute_run  # noqa: E402
+from core.broker import enqueue_run  # noqa: E402
+from db.database import engine  # noqa: E402
+from db.models import SpecSession, User  # noqa: E402
+from services.pipeline_runner import execute_run  # noqa: E402
 
 logger = logging.getLogger(__name__)
 audit_logger = logging.getLogger("audit")
@@ -147,7 +147,7 @@ async def dispatch_run(run_id: UUID) -> None:
 
 async def reaper_loop() -> None:
     """API-side safety net for orphaned runs (worker runs its own sweep)."""
-    from pipeline_runner import reap_stuck_runs
+    from services.pipeline_runner import reap_stuck_runs
     while True:
         await asyncio.sleep(60)
         try:

@@ -19,9 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlmodel import Session, select  # noqa: E402
 
-from database import engine  # noqa: E402
-from models import Risk, SpecSession  # noqa: E402
-from risk_service import upsert_risks_from_findings  # noqa: E402
+from db.database import engine  # noqa: E402
+from db.models import Risk, SpecSession  # noqa: E402
+from services.risk_service import upsert_risks_from_findings  # noqa: E402
 
 logger = logging.getLogger("backfill_risks")
 logging.basicConfig(level=logging.INFO)

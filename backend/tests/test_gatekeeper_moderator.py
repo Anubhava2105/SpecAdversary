@@ -2,14 +2,14 @@ import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
-from graph import (
+from db.models import ParsedSpec, SessionStatus, SpecSession
+from main import restart_pipeline_args, session_snapshot_events
+from services.graph import (
     competitor_completion_message,
     compute_missing_context,
     deterministic_moderation,
     preserve_moderated_identity,
 )
-from main import restart_pipeline_args, session_snapshot_events
-from models import ParsedSpec, SessionStatus, SpecSession
 
 
 def finding(identifier: str, **overrides):
@@ -81,8 +81,8 @@ def test_competitor_completion_retries_when_provider_returns_no_choices(monkeypa
     async def no_sleep(_):
         return None
 
-    monkeypatch.setattr("graph.LLM_TIMEOUT_SECONDS", 1)
-    monkeypatch.setattr("llm_gateway.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("services.graph.LLM_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr("services.llm_gateway.asyncio.sleep", no_sleep)
 
     message = asyncio.run(competitor_completion_message(client, [{"role": "user", "content": "test"}]))
 

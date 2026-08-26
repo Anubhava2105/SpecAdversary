@@ -14,8 +14,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
 from sqlmodel import Session, select
 
-from database import engine
-from models import RefreshToken, User
+from db.database import engine
+from db.models import RefreshToken, User
 
 # ── Config ──────────────────────────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me-in-production")

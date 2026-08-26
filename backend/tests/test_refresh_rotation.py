@@ -2,9 +2,9 @@
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from database import engine
+from db.database import engine
+from db.models import RefreshToken
 from main import app
-from models import RefreshToken
 
 client = TestClient(app)
 

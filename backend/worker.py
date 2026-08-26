@@ -4,9 +4,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from broker import dequeue_run
-from logging_config import setup_logging
-from pipeline_runner import execute_run, reap_stuck_runs
+from core.broker import dequeue_run
+from core.logging_config import setup_logging
+from services.pipeline_runner import execute_run, reap_stuck_runs
 
 setup_logging()
 logger = logging.getLogger(__name__)

@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, create_engine
 
-import database
+from db import database
 
 # Always run the suite against throwaway in-memory SQLite. A file-backed
 # default URL would leak rows between runs and break uniqueness assertions.
@@ -20,8 +20,8 @@ database.engine = create_engine(
     poolclass=StaticPool,
 )
 
-import models  # noqa: E402, F401  (populate SQLModel metadata against shared engine)
-from database import engine  # noqa: E402
+import db.models  # noqa: E402, F401  (populate SQLModel metadata against shared engine)
+from db.database import engine  # noqa: E402
 
 SQLModel.metadata.create_all(engine)
 with engine.begin() as conn:

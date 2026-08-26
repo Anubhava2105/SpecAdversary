@@ -10,8 +10,8 @@ from uuid import uuid4
 import pytest
 from sqlmodel import Session, select
 
-import pipeline_runner
-from models import AnalysisRun, Risk, RunEvent, RunStatus, SessionStatus, SpecSession
+from db.models import AnalysisRun, Risk, RunEvent, RunStatus, SessionStatus, SpecSession
+from services import pipeline_runner
 
 
 @pytest.fixture(autouse=True)

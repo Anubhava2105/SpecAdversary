@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from auth import hash_password
-from database import engine
+from core.auth import hash_password
+from db.database import engine
+from db.models import User
 from main import _oauth_upsert
-from models import User
 
 
 def _make_password_user(email: str) -> User:

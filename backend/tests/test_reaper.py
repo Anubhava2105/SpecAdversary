@@ -5,10 +5,10 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-import pipeline_runner
-from database import engine
-from models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
-from pipeline_runner import reap_stuck_runs
+from db.database import engine
+from db.models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
+from services import pipeline_runner
+from services.pipeline_runner import reap_stuck_runs
 
 
 def _make_run(

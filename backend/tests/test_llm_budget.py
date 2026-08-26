@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import llm_gateway
-from llm_gateway import (
+from services import llm_gateway
+from services.llm_gateway import (
     BudgetExceeded,
     begin_token_budget,
     charge_tokens,

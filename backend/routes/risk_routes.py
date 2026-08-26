@@ -11,11 +11,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-import deps
-import lifecycle
-from auth import get_optional_user
-from database import engine
-from models import (
+from core import deps
+from core.auth import get_optional_user
+from db.database import engine
+from db.models import (
     AnalysisRun,
     Risk,
     RiskComment,
@@ -23,7 +22,8 @@ from models import (
     SpecSession,
     User,
 )
-from risk_service import (
+from services import lifecycle
+from services.risk_service import (
     get_risk_summary,
     validate_status_transition,
 )

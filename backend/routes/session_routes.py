@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
-import deps
-import lifecycle
-from auth import create_websocket_ticket, get_current_user, get_optional_user
-from database import engine
-from models import AnalysisRun, Critic, SessionStatus, SpecSession, User
+from core import deps
+from core.auth import create_websocket_ticket, get_current_user, get_optional_user
+from db.database import engine
+from db.models import AnalysisRun, Critic, SessionStatus, SpecSession, User
+from services import lifecycle
 
 router = APIRouter()
 

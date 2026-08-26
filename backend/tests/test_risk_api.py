@@ -4,10 +4,10 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-import deps
-from database import engine
+from core import deps
+from db.database import engine
+from db.models import Risk, SessionStatus, SpecSession
 from main import app
-from models import Risk, SessionStatus, SpecSession
 
 # Disable rate limiting for tests
 

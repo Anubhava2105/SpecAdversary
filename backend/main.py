@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from logging_config import setup_logging  # noqa: E402
+from core.logging_config import setup_logging  # noqa: E402
 
 setup_logging()
 
@@ -24,29 +24,26 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from sqlmodel import Session
 
-import auth_routes
-import deps
-import risk_routes
-import session_routes
-import stream_routes
-from auth_routes import _oauth_upsert as _oauth_upsert  # noqa: F401  (test-facing re-export)
-from broker import client as redis_client
-from database import engine
-from deps import (
+from core import deps
+from core.broker import client as redis_client
+from core.deps import (
     IS_PRODUCTION,
     limiter,
     validate_production_config,
 )
-from deps import (
+from core.deps import (
     client_key as client_key,  # noqa: F401  (test-facing re-export)
 )
-from deps import (
+from core.deps import (
     reserve_daily_session as reserve_daily_session,  # noqa: F401  (test-facing re-export)
 )
-from session_routes import (
+from db.database import engine
+from routes import auth_routes, risk_routes, session_routes, stream_routes
+from routes.auth_routes import _oauth_upsert as _oauth_upsert  # noqa: F401  (test-facing re-export)
+from routes.session_routes import (
     restart_pipeline_args as restart_pipeline_args,  # noqa: F401  (test-facing re-export)
 )
-from session_routes import (
+from routes.session_routes import (
     session_snapshot_events as session_snapshot_events,  # noqa: F401  (test-facing re-export)
 )
 

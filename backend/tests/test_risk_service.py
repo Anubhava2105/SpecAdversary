@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session
 
-from database import engine
-from models import Risk, RiskStatus, SpecSession
-from risk_service import (
+from db.database import engine
+from db.models import Risk, RiskStatus, SpecSession
+from services.risk_service import (
     backfill_risks_for_session,
     get_risk_summary,
     upsert_risks_from_findings,

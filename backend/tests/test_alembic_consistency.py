@@ -14,7 +14,7 @@ from alembic.config import Config
 from sqlalchemy import inspect
 from sqlmodel import SQLModel
 
-import models  # noqa: F401  (populates SQLModel.metadata)
+import db.models  # noqa: F401  (populates SQLModel.metadata)
 from alembic import command
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -7,11 +7,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-import deps
 import main
-from auth import hash_password
-from database import engine
-from models import SpecSession, User
+from core import deps
+from core.auth import hash_password
+from db.database import engine
+from db.models import SpecSession, User
 
 deps.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)
