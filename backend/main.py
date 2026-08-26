@@ -15,10 +15,9 @@ from logging_config import setup_logging  # noqa: E402
 
 setup_logging()
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
@@ -26,14 +25,9 @@ from sqlmodel import Session, col, select
 
 import auth_routes
 import deps
-import lifecycle
 import risk_routes
-from auth import (
-    create_websocket_ticket,
-    decode_token,
-    get_current_user,
-    get_optional_user,
-)
+import session_routes
+from auth import decode_token
 from auth_routes import _oauth_upsert as _oauth_upsert  # noqa: F401  (test-facing re-export)
 from broker import client as redis_client
 from broker import subscribe_run
@@ -41,11 +35,7 @@ from database import engine
 from deps import (
     ALLOWED_ORIGINS,
     IS_PRODUCTION,
-    audit_logger,
-    dispatch_run,
     limiter,
-    reject_prompt_injection,
-    reserve_daily_session,
     validate_production_config,
 )
 from deps import (
@@ -54,13 +44,20 @@ from deps import (
 from deps import (
     client_key as client_key,  # noqa: F401  (test-facing re-export)
 )
+from deps import (
+    reserve_daily_session as reserve_daily_session,  # noqa: F401  (test-facing re-export)
+)
 from models import (
     AnalysisRun,
-    Critic,
     RunEvent,
-    SessionStatus,
     SpecSession,
     User,
+)
+from session_routes import (
+    restart_pipeline_args as restart_pipeline_args,  # noqa: F401  (test-facing re-export)
+)
+from session_routes import (
+    session_snapshot_events,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,134 +137,6 @@ async def healthz():
 
 
 # ── Existing logic (preserved) ─────────────────────────────────────────────
-class CreateSession(BaseModel):
-    raw_spec: str = Field(min_length=1, max_length=10_000)
-    selected_critics: list[Critic] = Field(
-        min_length=1,
-        default_factory=lambda: [Critic.assumption, Critic.competitor, Critic.economics, Critic.feasibility],
-    )
-
-def session_snapshot_events(row: SpecSession):
-    """Persistent events replayed to a late WebSocket subscriber."""
-    yield {"type": "status", "status": row.status.value}
-    yield {"type": "gatekeeper", "missing_context": row.missing_context or []}
-    for section, content in row.parsed_sections.items():
-        yield {"type": "section_parsed", "section": section, "content": content}
-    for finding in row.findings:
-        yield {"type": "finding", "finding": finding}
-    if row.status == SessionStatus.done:
-        yield {"type": "done", "revised_spec": row.revised_spec or ""}
-
-
-def restart_pipeline_args(row: SpecSession) -> tuple[UUID, str, list[str]]:
-    """Compatibility helper retained for callers migrating to durable runs."""
-    return row.id, row.raw_spec, row.selected_critics
-
-class ReplyPayload(BaseModel):
-    reply: str = Field(min_length=1, max_length=2_000)
-
-
-@app.post("/sessions")
-@limiter.limit("5/hour")
-async def create_session(request: Request, payload: CreateSession, user: User | None = Depends(get_optional_user)):
-    reject_prompt_injection(payload.raw_spec, request.client.host if request.client else "unknown")
-    reserve_daily_session(user)
-    selected = [c.value for c in payload.selected_critics]
-    row = SpecSession(raw_spec=payload.raw_spec, selected_critics=selected, user_id=user.id if user else None)
-    with Session(engine) as db:
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-        run = AnalysisRun(session_id=row.id)
-        db.add(run)
-        db.commit()
-        db.refresh(run)
-
-        row_id = row.id
-        run_id = run.id
-
-    audit_logger.info("session_created - IP: %s - ID: %s", request.client.host if request.client else "unknown", row_id)
-
-    await dispatch_run(run_id)
-    return {"id": row_id, "run_id": run_id}
-
-@app.post("/sessions/{sid}/findings/{fid}/reply")
-@limiter.limit("5/minute")
-async def reply_to_finding(request: Request, sid: UUID, fid: str, payload: ReplyPayload, user: User | None = Depends(get_optional_user)):
-    from sqlalchemy.orm.attributes import flag_modified
-    with Session(engine) as db:
-        row = db.get(SpecSession, sid)
-        if not row:
-            raise HTTPException(404, "Session not found")
-        if not deps.can_access_session(row, user):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-        if not lifecycle.accepts_client_activity(row.status):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
-
-        finding_dict = next((f for f in row.findings if f.get("id") == fid), None)
-        if not finding_dict:
-            raise HTTPException(404, "Finding not found")
-
-        finding_dict.setdefault("thread", []).append({"role": "user", "content": payload.reply})
-        # Mark the JSON column as dirty so SQLAlchemy detects the in-place mutation
-        flag_modified(row, "findings")
-        db.add(row)
-        db.commit()
-        # Capture values while row is still attached to the session
-        run = AnalysisRun(session_id=row.id, re_evaluate_finding_id=fid)
-        db.add(run)
-        db.commit()
-        db.refresh(run)
-        run_id = run.id
-
-    await dispatch_run(run_id)
-    return {"status": "queued", "run_id": str(run_id)}
-
-@app.get("/sessions")
-@limiter.limit("30/minute")
-async def list_sessions(request: Request, user: User | None = Depends(get_optional_user)):
-    with Session(engine) as db:
-        if user:
-            rows = db.exec(
-                select(SpecSession)
-                .where(SpecSession.user_id == user.id)
-                .order_by(col(SpecSession.created_at).desc())
-            ).all()
-        else:
-            # Guests see no history (their sessions are ephemeral)
-            rows = []
-    return [
-        {
-            "id": str(row.id),
-            "created_at": row.created_at.isoformat(),
-            "status": row.status.value,
-            "title": row.raw_spec[:80].split("\n")[0] + ("…" if len(row.raw_spec) > 80 else ""),
-        }
-        for row in rows
-    ]
-
-@app.get("/sessions/{sid}")
-@limiter.limit("30/minute")
-async def get_session(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
-    with Session(engine) as db:
-        row = db.get(SpecSession, sid)
-    if row is None:
-        raise HTTPException(404, "Session not found")
-    if not deps.can_access_session(row, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-    return row
-
-
-@app.post("/sessions/{sid}/stream-ticket")
-async def create_stream_ticket(sid: UUID, user: User = Depends(get_current_user)):
-    with Session(engine) as db:
-        row = db.get(SpecSession, sid)
-    if not row:
-        raise HTTPException(404, "Session not found")
-    if not deps.can_access_session(row, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-    return {"ticket": create_websocket_ticket(user.id)}
-
 @app.websocket("/sessions/{sid}/stream")
 async def stream_session(ws: WebSocket, sid: UUID):
     origin = ws.headers.get("origin")
@@ -417,4 +286,5 @@ async def _stream_run_events(ws: WebSocket, sid: UUID) -> None:
 
 app.include_router(risk_routes.router)
 app.include_router(auth_routes.router)
+app.include_router(session_routes.router)
 

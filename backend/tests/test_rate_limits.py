@@ -13,7 +13,7 @@ from auth import hash_password
 from database import engine
 from models import SpecSession, User
 
-main.dispatch_run = lambda run_id: asyncio.sleep(0)
+deps.dispatch_run = lambda run_id: asyncio.sleep(0)
 client = TestClient(main.app)
 
 
