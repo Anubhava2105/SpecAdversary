@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+import deps
 import main
 from auth import hash_password
 from database import engine
@@ -41,14 +42,14 @@ def _seed_sessions(user: User, count: int) -> None:
 
 
 def test_authenticated_user_under_limit_passes(monkeypatch):
-    monkeypatch.setattr(main, "PER_USER_DAILY_LIMIT", 3)
+    monkeypatch.setattr(deps, "PER_USER_DAILY_LIMIT", 3)
     user = _make_user("underlimit@example.com")
     _seed_sessions(user, 2)
     main.reserve_daily_session(user)  # must not raise
 
 
 def test_authenticated_user_over_limit_gets_429(monkeypatch):
-    monkeypatch.setattr(main, "PER_USER_DAILY_LIMIT", 2)
+    monkeypatch.setattr(deps, "PER_USER_DAILY_LIMIT", 2)
     user = _make_user("overlimit@example.com")
     _seed_sessions(user, 2)
     with __import__("pytest").raises(HTTPException) as exc_info:
@@ -57,12 +58,12 @@ def test_authenticated_user_over_limit_gets_429(monkeypatch):
 
 
 def test_guest_skips_per_user_check_but_reserves_global(monkeypatch):
-    monkeypatch.setattr(main, "DAILY_SESSION_LIMIT", 10**6)
+    monkeypatch.setattr(deps, "DAILY_SESSION_LIMIT", 10**6)
     main.reserve_daily_session(None)  # must not raise
 
 
 def test_client_key_uses_forwarded_for_when_trusted(monkeypatch):
-    monkeypatch.setattr(main, "TRUST_PROXY", True)
+    monkeypatch.setattr(deps, "TRUST_PROXY", True)
     request = type("R", (), {"headers": {"x-forwarded-for": "203.0.113.7, 10.0.0.1"}, "client": None})()
     assert main.client_key(request) == "203.0.113.7"
 
@@ -73,7 +74,7 @@ def test_client_key_falls_back_to_remote_address():
 
 
 def test_end_to_end_user_budget_blocks_fourth_session(monkeypatch):
-    monkeypatch.setattr(main, "PER_USER_DAILY_LIMIT", 2)
+    monkeypatch.setattr(deps, "PER_USER_DAILY_LIMIT", 2)
     r = client.post("/auth/signup", json={"email": "e2e-budget@example.com", "password": "password123"})
     headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
@@ -83,3 +84,4 @@ def test_end_to_end_user_budget_blocks_fourth_session(monkeypatch):
 
     third = client.post("/sessions", json={"raw_spec": "spec text", "selected_critics": ["assumption"]}, headers=headers)
     assert third.status_code == 429
+

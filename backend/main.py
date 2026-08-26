@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -23,12 +22,12 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from sqlalchemy import func, text
 from sqlmodel import Session, col, select
 
+import deps
 import lifecycle
 from auth import (
     GITHUB_CLIENT_ID,
@@ -47,8 +46,24 @@ from auth import (
     verify_password,
 )
 from broker import client as redis_client
-from broker import enqueue_run, subscribe_run
+from broker import subscribe_run
 from database import engine
+from deps import (
+    ALLOWED_ORIGINS,
+    IS_PRODUCTION,
+    audit_logger,
+    dispatch_run,
+    limiter,
+    reject_prompt_injection,
+    reserve_daily_session,
+    validate_production_config,
+)
+from deps import (
+    FRONTEND_URL as FRONTEND_URL,  # noqa: F401  (OAuth endpoints below; re-export for tests)
+)
+from deps import (
+    client_key as client_key,  # noqa: F401  (test-facing re-export)
+)
 from models import (
     AnalysisRun,
     Critic,
@@ -60,71 +75,12 @@ from models import (
     SpecSession,
     User,
 )
-from pipeline_runner import execute_run
 from risk_service import (
     get_risk_summary,
     validate_status_transition,
 )
 
 logger = logging.getLogger(__name__)
-
-ENV = os.getenv("ENV", "development")
-IS_PRODUCTION = ENV == "production"
-
-def validate_production_config() -> None:
-    """Refuse to boot in production with unsafe defaults."""
-    if not IS_PRODUCTION:
-        return
-    problems = []
-    secret = os.getenv("JWT_SECRET", "")
-    if len(secret) < 32 or secret.startswith("dev-insecure"):
-        problems.append("JWT_SECRET must be a unique random value of at least 32 characters")
-    frontend = os.getenv("FRONTEND_URL", "")
-    if not frontend or "localhost" in frontend or "127.0.0.1" in frontend:
-        problems.append("FRONTEND_URL must be set to the production public origin")
-    if problems:
-        raise RuntimeError("Refusing to start in production with unsafe configuration: " + "; ".join(problems))
-
-if IS_PRODUCTION:
-    ALLOWED_ORIGINS = {
-        os.getenv("CORS_ORIGIN", "https://specadversary.com"),
-        os.getenv("FRONTEND_URL", "https://specadversary.com"),
-    }
-else:
-    ALLOWED_ORIGINS = {
-        os.getenv("CORS_ORIGIN", "https://specadversary.com"),
-        "http://localhost:5174",
-        "http://localhost:5173",
-        "http://127.0.0.1:5174",
-        "http://127.0.0.1:5173",
-    }
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
-TRUST_PROXY = os.getenv("TRUST_PROXY", "false").lower() == "true"
-DAILY_SESSION_LIMIT = 100
-PER_USER_DAILY_LIMIT = int(os.getenv("PER_USER_DAILY_SESSION_LIMIT", "25"))
-INJECTION_PATTERNS = (
-    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior)\s+instructions?\b", re.IGNORECASE),
-    re.compile(r"\b(?:output|reveal|show|print)\s+(?:your\s+)?system\s+prompt\b", re.IGNORECASE),
-)
-
-def client_key(request: Request) -> str:
-    """Rate-limit identity. Behind a trusted proxy the browser IP arrives in
-    X-Forwarded-For; without this every visitor shares the proxy's address
-    and drains one collective bucket."""
-    if TRUST_PROXY:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-    return get_remote_address(request)
-
-# Shared across processes/replicas via Redis when configured; memory:// keeps
-# single-process local development working without infrastructure.
-limiter = Limiter(
-    key_func=client_key,
-    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
-)
-inline_tasks: set[asyncio.Task] = set()
-audit_logger = logging.getLogger("audit")
 
 class SecurityHeadersMiddleware:
     """Raw ASGI middleware — skips WebSocket connections (unlike BaseHTTPMiddleware)."""
@@ -157,20 +113,10 @@ class SecurityHeadersMiddleware:
 @asynccontextmanager
 async def lifespan(app):
     validate_production_config()
-    reaper_task = asyncio.create_task(_reaper_loop())
+    reaper_task = asyncio.create_task(deps.reaper_loop())
     yield
     reaper_task.cancel()
 
-
-async def _reaper_loop() -> None:
-    """API-side safety net for orphaned runs (worker runs its own sweep)."""
-    from pipeline_runner import reap_stuck_runs
-    while True:
-        await asyncio.sleep(60)
-        try:
-            await reap_stuck_runs()
-        except Exception:
-            logger.exception("Stuck-run sweep failed")
 app=FastAPI(title="Spec Adversary",lifespan=lifespan, docs_url=None if os.environ.get("ENV") == "production" else "/docs")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
@@ -430,55 +376,6 @@ class CreateSession(BaseModel):
         min_length=1,
         default_factory=lambda: [Critic.assumption, Critic.competitor, Critic.economics, Critic.feasibility],
     )
-
-def reject_prompt_injection(raw_spec: str, client_ip: str) -> None:
-    """Reject obvious instruction-override attempts before they reach an LLM."""
-    if any(pattern.search(raw_spec) for pattern in INJECTION_PATTERNS):
-        audit_logger.warning("prompt_injection_blocked - IP: %s - Preview: %s", client_ip, raw_spec[:200])
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Spec contains a disallowed prompt-injection phrase")
-
-def reserve_daily_session(user: User | None = None) -> None:
-    """Reserve one of today's session budget slots.
-
-    Authenticated users draw from a per-user allowance first; the global
-    SQLite-backed budget remains as a runaway backstop.
-    """
-    if user is not None:
-        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        with Session(engine) as db:
-            created_today = db.exec(
-                select(func.count(col(SpecSession.id))).where(
-                    SpecSession.user_id == user.id,
-                    SpecSession.created_at >= day_start,
-                )
-            ).one()
-        if created_today >= PER_USER_DAILY_LIMIT:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Daily limit of {PER_USER_DAILY_LIMIT} analyses reached; try again tomorrow",
-            )
-
-    day = datetime.now(timezone.utc).date().isoformat()
-    # A single UPSERT closes the read/increment/write race between concurrent
-    # requests; `RETURNING` is supported by the SQLite versions SQLAlchemy uses.
-    statement = text("""
-        INSERT INTO daily_usage (day, sessions_created) VALUES (:day, 1)
-        ON CONFLICT(day) DO UPDATE SET sessions_created = daily_usage.sessions_created + 1
-        WHERE daily_usage.sessions_created < :limit
-        RETURNING sessions_created
-    """)
-    with engine.begin() as connection:
-        reserved = connection.execute(statement, {"day": day, "limit": DAILY_SESSION_LIMIT}).scalar_one_or_none()
-    if reserved is None:
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Daily session limit reached; try again tomorrow")
-async def dispatch_run(run_id: UUID) -> None:
-    """Enqueue for a worker; inline execution is only for explicit local development."""
-    if os.getenv("INLINE_WORKER", "false").lower() == "true":
-        task = asyncio.create_task(execute_run(run_id))
-        inline_tasks.add(task)
-        task.add_done_callback(inline_tasks.discard)
-        return
-    await enqueue_run(run_id)
 
 def session_snapshot_events(row: SpecSession):
     """Persistent events replayed to a late WebSocket subscriber."""
