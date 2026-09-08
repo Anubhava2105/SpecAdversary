@@ -33,6 +33,52 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _normalize_email(email: str) -> str:
+    """Lowercase + strip: `Victim@x.com` and `victim@x.com` are one account.
+
+    Lookups are case-sensitive at the DB, so every read and write path goes
+    through here or duplicate accounts bypass the verified-email link.
+    """
+    return email.strip().lower()
+
+
+def _token_pair(user: User) -> dict:
+    """The JWT access/refresh pair plus public user shape returned at every sign-in."""
+    return {
+        "access_token": create_access_token(user.id),
+        "refresh_token": create_refresh_token(user.id),
+        "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
+    }
+
+
+def _claim_guest_session(db: Session, user_id, claim_session_id: str | None) -> None:
+    """Attach an unowned guest session to a fresh sign-in.
+
+    Claiming is proof-of-identifier only; the silent skip on bad input is
+    intentional (a stale client-sent id must not fail signup).
+    """
+    if not claim_session_id:
+        return
+    try:
+        session_id = UUID(claim_session_id)
+        session_row = db.get(SpecSession, session_id)
+        if session_row and session_row.user_id is None:
+            session_row.user_id = user_id
+            db.add(session_row)
+            db.commit()
+    except Exception:
+        logger.warning("Guest-session claim failed for %s", claim_session_id, exc_info=True)
+
+
+async def _exchange_oauth(provider_display: str, exchange, code: str, redirect_uri: str) -> dict:
+    """Run a provider code exchange, translating any failure into a 400."""
+    try:
+        return await exchange(code, redirect_uri)
+    except Exception:
+        logger.exception("%s OAuth exchange failed", provider_display)
+        raise HTTPException(400, f"{provider_display} authentication failed")
+
 # ── Auth payloads ──────────────────────────────────────────────────────────
 class SignupPayload(BaseModel):
     email: EmailStr
@@ -60,50 +106,33 @@ class OAuthCallbackPayload(BaseModel):
 @router.post("/auth/signup")
 @deps.limiter.limit("10/hour")
 async def signup(request: Request, payload: SignupPayload):
+    email = _normalize_email(payload.email)
     with Session(engine) as db:
-        existing = db.exec(select(User).where(User.email == payload.email)).first()
+        existing = db.exec(select(User).where(User.email == email)).first()
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
         user = User(
-            email=payload.email,
+            email=email,
             password_hash=hash_password(payload.password),
-            display_name=payload.display_name or payload.email.split("@")[0],
+            display_name=payload.display_name or email.split("@")[0],
         )
         db.add(user)
         db.commit()
         db.refresh(user)
 
-        # Claim guest session if provided
-        if payload.claim_session_id:
-            try:
-                session_id = UUID(payload.claim_session_id)
-                session_row = db.get(SpecSession, session_id)
-                if session_row and session_row.user_id is None:
-                    session_row.user_id = user.id
-                    db.add(session_row)
-                    db.commit()
-            except (ValueError, Exception):
-                pass  # Invalid UUID or DB error — skip claim silently
+        _claim_guest_session(db, user.id, payload.claim_session_id)
 
-        return {
-            "access_token": create_access_token(user.id),
-            "refresh_token": create_refresh_token(user.id),
-            "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
-        }
+        return _token_pair(user)
 
 
 @router.post("/auth/login")
 @deps.limiter.limit("10/hour")
 async def login(request: Request, payload: LoginPayload):
     with Session(engine) as db:
-        user = db.exec(select(User).where(User.email == payload.email)).first()
+        user = db.exec(select(User).where(User.email == _normalize_email(payload.email))).first()
         if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
-        return {
-            "access_token": create_access_token(user.id),
-            "refresh_token": create_refresh_token(user.id),
-            "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
-        }
+        return _token_pair(user)
 
 
 @router.post("/auth/refresh")
@@ -115,8 +144,12 @@ async def refresh_token(request: Request, payload: RefreshPayload):
 @router.post("/auth/logout")
 @deps.limiter.limit("10/hour")
 async def logout(request: Request, payload: RefreshPayload):
-    """Revoke every refresh-token family for the token's user (server-side logout)."""
-    data = decode_token(payload.refresh_token, expected_type="refresh")
+    """Revoke every refresh-token family for the token's user (server-side logout).
+
+    Expiry is not verified: an expired-but-legitimate token must still log the
+    user out. The signature is always verified, so the `sub` is trustworthy.
+    """
+    data = decode_token(payload.refresh_token, expected_type="refresh", verify_exp=False)
     revoke_user_refresh_tokens(UUID(data["sub"]))
     return {"status": "logged_out"}
 
@@ -146,11 +179,7 @@ async def google_redirect():
 async def google_callback(request: Request, payload: OAuthCallbackPayload):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(501, "Google OAuth not configured")
-    try:
-        info = await exchange_google_code(payload.code, payload.redirect_uri)
-    except Exception:
-        logger.exception("Google OAuth exchange failed")
-        raise HTTPException(400, "Google authentication failed")
+    info = await _exchange_oauth("Google", exchange_google_code, payload.code, payload.redirect_uri)
     return await _oauth_upsert("google", str(info["id"]), info.get("email", ""), info.get("name", ""), info.get("email_verified", False), payload.claim_session_id)
 
 
@@ -172,11 +201,7 @@ async def github_redirect():
 async def github_callback(request: Request, payload: OAuthCallbackPayload):
     if not GITHUB_CLIENT_ID:
         raise HTTPException(501, "GitHub OAuth not configured")
-    try:
-        info = await exchange_github_code(payload.code, payload.redirect_uri)
-    except Exception:
-        logger.exception("GitHub OAuth exchange failed")
-        raise HTTPException(400, "GitHub authentication failed")
+    info = await _exchange_oauth("GitHub", exchange_github_code, payload.code, payload.redirect_uri)
     return await _oauth_upsert("github", str(info["id"]), info.get("email", ""), info.get("name") or info.get("login", ""), info.get("email_verified", False), payload.claim_session_id)
 
 
@@ -195,6 +220,7 @@ async def _oauth_upsert(provider: str, provider_id: str, email: str, display_nam
         raise HTTPException(400, f"{provider.capitalize()} account email is not verified; verify it at {provider} and try again")
     if not email:
         raise HTTPException(400, f"Could not retrieve email from {provider}")
+    email = _normalize_email(email)
     with Session(engine) as db:
         user = db.exec(
             select(User).where(User.oauth_provider == provider, User.oauth_provider_id == provider_id)
@@ -203,6 +229,13 @@ async def _oauth_upsert(provider: str, provider_id: str, email: str, display_nam
             # Check if a password-based account exists with the same email
             user = db.exec(select(User).where(User.email == email)).first()
             if user:
+                if user.oauth_provider and user.oauth_provider != provider:
+                    # A second provider must not silently orphan the first
+                    # link — the user has to unlink it explicitly.
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT,
+                        f"This account is already linked to {user.oauth_provider}; unlink it first",
+                    )
                 # Link the OAuth provider to the existing account
                 user.oauth_provider = provider
                 user.oauth_provider_id = provider_id
@@ -219,20 +252,6 @@ async def _oauth_upsert(provider: str, provider_id: str, email: str, display_nam
             db.commit()
             db.refresh(user)
 
-        # Claim guest session if provided
-        if claim_session_id:
-            try:
-                session_id = UUID(claim_session_id)
-                session_row = db.get(SpecSession, session_id)
-                if session_row and session_row.user_id is None:
-                    session_row.user_id = user.id
-                    db.add(session_row)
-                    db.commit()
-            except Exception:
-                logger.warning("Guest-session claim failed for %s", claim_session_id, exc_info=True)
+        _claim_guest_session(db, user.id, claim_session_id)
 
-        return {
-            "access_token": create_access_token(user.id),
-            "refresh_token": create_refresh_token(user.id),
-            "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
-        }
+        return _token_pair(user)

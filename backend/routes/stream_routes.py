@@ -43,10 +43,16 @@ async def stream_session(ws: WebSocket, sid: UUID):
     if ticket:
         try:
             payload = decode_token(ticket, expected_type="websocket")
-            with Session(engine) as db:
-                ws_user = db.get(User, UUID(payload["sub"]))
         except HTTPException:
-            pass  # Invalid token → treat as guest
+            payload = None  # Invalid token → treat as guest
+        if payload is not None:
+            try:
+                ticket_user_id = UUID(payload["sub"])
+            except (ValueError, KeyError, TypeError):
+                ticket_user_id = None  # well-formed JWT, non-UUID sub → guest
+            if ticket_user_id is not None:
+                with Session(engine) as db:
+                    ws_user = db.get(User, ticket_user_id)
 
     with Session(engine) as db:
         row = db.get(SpecSession, sid)
@@ -55,14 +61,21 @@ async def stream_session(ws: WebSocket, sid: UUID):
         await ws.accept()
         await ws.close(code=status.WS_1008_POLICY_VIOLATION)
         return
+    if row is None:
+        # No session: accept-then-close so the client learns the sid is bogus
+        # instead of spinning on an empty stream forever.
+        logger.warning("WS rejected: unknown session %s", sid)
+        await ws.accept()
+        await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
     await ws.accept(subprotocol="specadversary" if "specadversary" in protocols else None)
     try:
         # Replay the persisted snapshot for a browser that connects after the
         # very fast stub pipeline (or reconnects after a page reload).
-        if row:
-            for event in session_snapshot_events(row):
-                await ws.send_json(event)
+        # `row` is guaranteed present here — unknown sids were closed above.
+        for event in session_snapshot_events(row):
+            await ws.send_json(event)
         await _stream_run_events(ws, sid)
     except (WebSocketDisconnect, asyncio.CancelledError):
         pass  # client went away or the socket was torn down — nothing to clean up
@@ -70,7 +83,9 @@ async def stream_session(ws: WebSocket, sid: UUID):
 
 def _latest_run_id(db: Session, sid: UUID) -> UUID | None:
     latest = db.exec(
-        select(AnalysisRun).where(AnalysisRun.session_id == sid).order_by(col(AnalysisRun.created_at).desc())
+        select(AnalysisRun)
+        .where(AnalysisRun.session_id == sid)
+        .order_by(col(AnalysisRun.created_at).desc(), col(AnalysisRun.id).desc())
     ).first()
     return latest.id if latest else None
 

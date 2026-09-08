@@ -1,10 +1,10 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from db.database import engine
-from db.models import User
+from db.models import RefreshToken, User
 from main import app
 
 client = TestClient(app)
@@ -22,7 +22,7 @@ def test_signup_creates_user():
     assert data["user"]["email"] == "test@example.com"
 
     with Session(engine) as db:
-        user = db.get(User, uuid4(data["user"]["id"]) if False else UUID(data["user"]["id"]))
+        user = db.get(User, UUID(data["user"]["id"]))
         assert user is not None
         assert user.password_hash is not None
 
@@ -46,6 +46,38 @@ def test_login_invalid_password():
     client.post("/auth/signup", json={"email": "badpass@example.com", "password": "password123"})
     response = client.post("/auth/login", json={"email": "badpass@example.com", "password": "wrongpassword"})
     assert response.status_code == 401
+
+
+def test_email_matching_is_case_insensitive():
+    client.post("/auth/signup", json={"email": "CaseUser@example.com", "password": "password123"})
+    dup = client.post("/auth/signup", json={"email": "caseuser@EXAMPLE.com", "password": "password123"})
+    assert dup.status_code == 409  # same account, not a second row
+
+    login = client.post("/auth/login", json={"email": "CASEUSER@example.com", "password": "password123"})
+    assert login.status_code == 200
+    assert login.json()["user"]["email"] == "caseuser@example.com"  # stored normalized
+
+
+def test_logout_revokes_even_expired_refresh_token():
+    signup = client.post("/auth/signup", json={"email": "expired-logout@example.com", "password": "password123"})
+    user_id = UUID(signup.json()["user"]["id"])
+    # Forge an expired token for the same user: signature valid, exp in the past.
+    from datetime import datetime, timedelta, timezone
+
+    import jwt as pyjwt
+
+    from core import auth as auth_module
+
+    expired = pyjwt.encode(
+        {"sub": str(user_id), "type": "refresh", "exp": datetime.now(timezone.utc) - timedelta(seconds=1)},
+        auth_module.JWT_SECRET,
+        algorithm=auth_module.JWT_ALGORITHM,
+    )
+    resp = client.post("/auth/logout", json={"refresh_token": expired})
+    assert resp.status_code == 200
+    with Session(engine) as db:
+        rows = db.exec(__import__("sqlmodel").select(RefreshToken).where(RefreshToken.user_id == user_id)).all()
+        assert rows and all(r.revoked for r in rows)
 
 
 def test_guest_session_creation():

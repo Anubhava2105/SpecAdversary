@@ -33,8 +33,8 @@ router = APIRouter()
 class RiskPatchPayload(BaseModel):
     status: str | None = None
     validation_plan: str | None = Field(default=None, max_length=5000)
-    owner_id: str | None = None  # "self" or null to unassign
-    due_date: str | None = None  # ISO 8601 or null to clear
+    owner_id: str | None = None  # "self" to assign, "" to unassign (JSON null leaves it unchanged)
+    due_date: str | None = None  # ISO 8601, "" to clear (JSON null leaves it unchanged)
     confidence: int | None = Field(default=None, ge=0, le=100)
 
 
@@ -88,6 +88,14 @@ class RiskListResponse(BaseModel):
     summary: RiskSummaryResponse
 
 
+def _owner_email(db: Session, owner_id) -> str | None:
+    """Resolve an owner's email; tolerate a dangling owner reference."""
+    if not owner_id:
+        return None
+    owner = db.get(User, owner_id)
+    return owner.email if owner else None
+
+
 def _risk_to_response(risk: Risk, *, comments: list[RiskCommentResponse] | None = None, owner_email: str | None = None) -> RiskResponse:
     return RiskResponse(
         id=str(risk.id),
@@ -125,8 +133,8 @@ async def list_risks(
     search: str | None = None,
     sort_by: str = "severity",
     sort_dir: str = "desc",
-    offset: int = 0,
-    limit: int = 50,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
     user: User | None = Depends(get_optional_user),
 ):
     with Session(engine) as db:
@@ -137,6 +145,10 @@ async def list_risks(
 
         query = select(Risk).where(Risk.session_id == sid)
         if status_filter:
+            try:
+                RiskStatus(status_filter)
+            except ValueError:
+                raise HTTPException(400, f"Invalid status filter: {status_filter}")
             query = query.where(Risk.status == status_filter)
         if severity:
             query = query.where(Risk.severity == severity)
@@ -153,7 +165,11 @@ async def list_risks(
             "due_date": col(Risk.due_date),
             "status": col(Risk.status),
         }
-        sort_col = SORT_COLUMNS.get(sort_by, col(Risk.severity))
+        if sort_by not in SORT_COLUMNS:
+            raise HTTPException(400, f"Invalid sort_by: {sort_by}")
+        if sort_dir not in ("asc", "desc"):
+            raise HTTPException(400, f"Invalid sort_dir: {sort_dir}")
+        sort_col = SORT_COLUMNS[sort_by]
         query = query.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
 
         total = db.exec(select(func.count()).select_from(query.subquery())).one()
@@ -201,10 +217,7 @@ async def get_risk_detail(request: Request, rid: UUID, user: User | None = Depen
                 created_at=c.created_at.isoformat(),
             ))
 
-        owner_email = None
-        if risk.owner_id:
-            owner = db.get(User, risk.owner_id)
-            owner_email = owner.email if owner else None
+        owner_email = _owner_email(db, risk.owner_id)
 
         return _risk_to_response(risk, comments=comments, owner_email=owner_email)
 
@@ -221,17 +234,21 @@ async def patch_risk(request: Request, rid: UUID, payload: RiskPatchPayload, use
                 new_status = RiskStatus(payload.status)
             except ValueError:
                 raise HTTPException(400, f"Invalid status: {payload.status}")
-            old_status = RiskStatus(risk.status) if isinstance(risk.status, str) else risk.status
+            try:
+                old_status = risk.status if isinstance(risk.status, RiskStatus) else RiskStatus(risk.status)
+            except ValueError:
+                raise HTTPException(500, "Risk has an invalid stored status")
             if not validate_status_transition(old_status, new_status):
                 raise HTTPException(
                     400,
                     f"Cannot transition from '{old_status.value}' to '{new_status.value}'"
                 )
             risk.status = new_status.value
-            # Auto-manage resolved_at
-            if new_status == RiskStatus.resolved:
+            # Auto-manage resolved_at — but only on an actual change, so a
+            # same-status write preserves the original resolution timestamp.
+            if new_status == RiskStatus.resolved and old_status != RiskStatus.resolved:
                 risk.resolved_at = datetime.now(timezone.utc)
-            elif old_status == RiskStatus.resolved:
+            elif old_status == RiskStatus.resolved and new_status != RiskStatus.resolved:
                 risk.resolved_at = None
 
         # Validation plan
@@ -268,12 +285,7 @@ async def patch_risk(request: Request, rid: UUID, payload: RiskPatchPayload, use
         db.commit()
         db.refresh(risk)
 
-        owner_email = None
-        if risk.owner_id:
-            owner = db.get(User, risk.owner_id)
-            owner_email = owner.email if owner else None
-
-        return _risk_to_response(risk, owner_email=owner_email)
+        return _risk_to_response(risk, owner_email=_owner_email(db, risk.owner_id))
 
 
 @router.post("/risks/{rid}/comments")

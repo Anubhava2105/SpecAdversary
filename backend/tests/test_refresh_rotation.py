@@ -62,9 +62,11 @@ def test_unknown_refresh_token_rejected():
 
 
 def test_tokens_stored_hashed_not_plaintext():
+    from core.auth import hash_token
+
     tokens = _signup("hashcheck@example.com")
     with Session(engine) as db:
         rows = db.exec(select(RefreshToken)).all()
     assert rows, "expected at least one stored refresh token"
     assert all(row.token_hash != tokens["refresh_token"] for row in rows)
-    assert all(len(row.token_hash) == 64 for row in rows)  # sha256 hex digest
+    assert any(row.token_hash == hash_token(tokens["refresh_token"]) for row in rows)

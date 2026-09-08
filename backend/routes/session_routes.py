@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
@@ -54,6 +54,16 @@ async def create_session(request: Request, payload: CreateSession, user: User | 
     row = SpecSession(raw_spec=payload.raw_spec, selected_critics=selected, user_id=user.id if user else None)
     with Session(engine) as db:
         db.add(row)
+        db.flush()
+        # Authoritative per-user enforcement inside the insert transaction:
+        # the pre-check in reserve_daily_session is a fast fail, this closes
+        # the concurrent-insert race (both checks share one helper).
+        if user is not None and deps.per_user_sessions_today(db, user.id) > deps.PER_USER_DAILY_LIMIT:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily limit of {deps.PER_USER_DAILY_LIMIT} analyses reached; try again tomorrow",
+            )
         db.commit()
         db.refresh(row)
         run = AnalysisRun(session_id=row.id)
@@ -99,13 +109,20 @@ async def reply_to_finding(request: Request, sid: UUID, fid: str, payload: Reply
 
 @router.get("/sessions")
 @deps.limiter.limit("30/minute")
-async def list_sessions(request: Request, user: User | None = Depends(get_optional_user)):
+async def list_sessions(
+    request: Request,
+    user: User | None = Depends(get_optional_user),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+):
     with Session(engine) as db:
         if user:
             rows = db.exec(
                 select(SpecSession)
                 .where(SpecSession.user_id == user.id)
                 .order_by(col(SpecSession.created_at).desc())
+                .offset(offset)
+                .limit(limit)
             ).all()
         else:
             # Guests see no history (their sessions are ephemeral)
@@ -129,7 +146,8 @@ async def get_session(request: Request, sid: UUID, user: User | None = Depends(g
 
 
 @router.post("/sessions/{sid}/stream-ticket")
-async def create_stream_ticket(sid: UUID, user: User = Depends(get_current_user)):
+@deps.limiter.limit("30/minute")
+async def create_stream_ticket(request: Request, sid: UUID, user: User = Depends(get_current_user)):
     with Session(engine) as db:
         deps.require_session_access(db, sid, user)
     return {"ticket": create_websocket_ticket(user.id)}

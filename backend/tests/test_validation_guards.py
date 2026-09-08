@@ -57,6 +57,7 @@ def test_reevaluate_rejected_while_analysis_in_progress():
     sid = _make_session(SessionStatus.synthesizing)
     with Session(engine) as db:
         row = db.get(SpecSession, UUID(sid))
+        assert row is not None
         risk = Risk(session_id=row.id, finding_id="f1", critic="assumption")
         db.add(risk)
         db.commit()

@@ -9,9 +9,7 @@ from db.database import engine
 from db.models import Risk, SessionStatus, SpecSession
 from main import app
 
-# Disable rate limiting for tests
-
-# Mock dispatch_run to avoid redis connection
+# Mock dispatch_run to avoid redis connection (slowapi itself is disabled globally in conftest)
 deps.dispatch_run = lambda run_id: __import__("asyncio").sleep(0)
 
 client = TestClient(app)
@@ -37,6 +35,7 @@ def _create_session_with_risks(headers: dict | None = None) -> tuple[str, list[s
     # Mark the analysis complete: re-evaluation is only valid post-run.
     with Session(engine) as db:
         row = db.get(SpecSession, UUID(session_id))
+        assert row is not None
         row.status = SessionStatus.done
         db.add(row)
         db.commit()
@@ -84,21 +83,34 @@ def test_list_risks_with_filters():
     resp = client.get(f"/sessions/{session_id}/risks?severity=structural")
     assert resp.status_code == 200
     data = resp.json()
+    assert data["total"] == 1
     assert all(r["severity"] == "structural" for r in data["items"])
 
     # Filter by status
     resp = client.get(f"/sessions/{session_id}/risks?status=open")
     assert resp.status_code == 200
-    assert resp.json()["total"] >= 0
+    assert resp.json()["total"] == 3
+
+    # Unknown status filter is rejected, not silently empty
+    resp = client.get(f"/sessions/{session_id}/risks?status=bogus")
+    assert resp.status_code == 400
 
 
 def test_list_risks_pagination():
     session_id, _ = _create_session_with_risks()
 
-    resp = client.get(f"/sessions/{session_id}/risks?limit=2&offset=0")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["items"]) <= 2
+    first = client.get(f"/sessions/{session_id}/risks?limit=2&offset=0").json()
+    assert first["total"] == 3
+    assert len(first["items"]) == 2
+
+    second = client.get(f"/sessions/{session_id}/risks?limit=2&offset=2").json()
+    assert len(second["items"]) == 1
+    assert second["items"][0]["id"] not in {r["id"] for r in first["items"]}
+
+    # Bounds are enforced
+    assert client.get(f"/sessions/{session_id}/risks?limit=0").status_code == 422
+    assert client.get(f"/sessions/{session_id}/risks?limit=1000").status_code == 422
+    assert client.get(f"/sessions/{session_id}/risks?offset=-1").status_code == 422
 
 
 def test_list_risks_sorting():
@@ -106,7 +118,12 @@ def test_list_risks_sorting():
 
     resp = client.get(f"/sessions/{session_id}/risks?sort_by=created_at&sort_dir=asc")
     assert resp.status_code == 200
-    assert resp.json()["total"] > 0
+    items = resp.json()["items"]
+    assert resp.json()["total"] == 3
+    assert [r["claim"] for r in items] == ["Test claim 0", "Test claim 1", "Test claim 2"]
+
+    assert client.get(f"/sessions/{session_id}/risks?sort_by=bogus").status_code == 400
+    assert client.get(f"/sessions/{session_id}/risks?sort_dir=sideways").status_code == 400
 
 
 # ── Risk detail ────────────────────────────────────────────────────────────
@@ -140,6 +157,35 @@ def test_patch_risk_invalid_transition():
     # Try to move deferred -> resolved (invalid)
     resp = client.patch(f"/risks/{risk_ids[0]}", json={"status": "resolved"})
     assert resp.status_code == 400
+
+
+def test_patch_risk_same_status_preserves_resolved_at():
+    session_id, risk_ids = _create_session_with_risks()
+
+    first = client.patch(f"/risks/{risk_ids[0]}", json={"status": "resolved"}).json()
+    assert first["status"] == "resolved"
+    resolved_at = first["resolved_at"]
+    assert resolved_at is not None
+
+    # A same-status write must not clobber the original resolution timestamp.
+    second = client.patch(f"/risks/{risk_ids[0]}", json={"status": "resolved"}).json()
+    assert second["resolved_at"] == resolved_at
+
+
+def test_patch_risk_owner_self_and_unassign():
+    token, headers = _signup("owner-assign@test.com")
+    session_id, risk_ids = _create_session_with_risks(headers=headers)
+
+    assigned = client.patch(f"/risks/{risk_ids[0]}", json={"owner_id": "self"}, headers=headers).json()
+    assert assigned["owner_email"] == "owner-assign@test.com"
+
+    unassigned = client.patch(f"/risks/{risk_ids[0]}", json={"owner_id": ""}, headers=headers).json()
+    assert unassigned["owner_id"] is None
+
+    # JSON null leaves ownership unchanged ("" is the unassign sentinel)
+    reassigned = client.patch(f"/risks/{risk_ids[0]}", json={"owner_id": "self"}, headers=headers).json()
+    noop = client.patch(f"/risks/{risk_ids[0]}", json={"owner_id": None}, headers=headers).json()
+    assert noop["owner_id"] == reassigned["owner_id"]
 
 
 def test_patch_risk_access_denied():

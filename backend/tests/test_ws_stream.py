@@ -75,3 +75,15 @@ def test_stream_closes_cleanly_on_client_disconnect():
         for _ in range(8):
             ws.receive_json()
     # Exiting the context closes the socket; server must not error.
+
+
+def test_stream_unknown_session_is_closed_not_left_spinning():
+    from uuid import uuid4
+
+    with client.websocket_connect(f"/sessions/{uuid4()}/stream") as ws:
+        import pytest
+        from starlette.websockets import WebSocketDisconnect
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+        assert exc_info.value.code == 1008
