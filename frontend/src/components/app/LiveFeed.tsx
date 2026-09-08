@@ -1,20 +1,8 @@
 import { ChevronRight, CornerDownRight } from 'lucide-react';
 import { useState } from 'react';
+import { CRITIC_TITLES, CRITICS, RULINGS } from '../../lib/critics';
+import { safeText } from '../../lib/text';
 import type { Critic, Finding } from '../../types';
-
-const labels: Record<Critic, string> = {
-  assumption: 'Assumption Hunter',
-  competitor: 'Competitor Simulator',
-  economics: 'Economics Tester',
-  feasibility: 'Feasibility Auditor',
-  security: 'Security Auditor',
-  compliance: 'Compliance Reviewer',
-  marketing: 'Marketing Skeptic',
-};
-
-const safeText = (value: string) =>
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitiser stripping control characters
-  value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 
 function CriticTimeline({
   selectedCritics,
@@ -27,14 +15,14 @@ function CriticTimeline({
 }) {
   if (selectedCritics.length === 0 || status === 'waiting') return null;
 
-  const criticCounts = findings.reduce((acc, f) => {
-    acc[f.critic] = (acc[f.critic] || 0) + 1;
+  const criticCounts = findings.reduce((acc, finding) => {
+    acc[finding.critic] = (acc[finding.critic] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
   const isActive = status === 'critiquing' || status === 'parsing' || status === 'moderating' || status === 'synthesizing';
 
   return (
-    <div className="critic-timeline">
+    <ul className="critic-timeline" aria-label="Counsel progress">
       {selectedCritics.map((critic) => {
         const count = criticCounts[critic] || 0;
         const criticState = count > 0
@@ -45,18 +33,18 @@ function CriticTimeline({
               ? 'running'
               : 'pending';
         return (
-          <div key={critic} className={`critic-step ${criticState}`}>
-            <span className={`critic-dot ${criticState}`} />
-            <span className="critic-step-label">{labels[critic] ?? critic}</span>
+          <li key={critic} className={`critic-step ${criticState}`}>
+            <span className={`critic-dot ${criticState}`} aria-hidden="true" />
+            <span className="critic-step-label">{CRITIC_TITLES[critic] ?? critic}</span>
             {status === 'done' && (
               <span style={{ marginLeft: 'auto', fontSize: '10px', color: criticState === 'empty' ? '#7b7d6f' : '#d5ff4d' }}>
                 {count} {count === 1 ? 'finding' : 'findings'}
               </span>
             )}
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -78,16 +66,16 @@ export function LiveFeed({
   selectedCritics?: Critic[];
 }) {
   return (
-    <section className="feed">
-      <p className="eyebrow">02 / LIVE SIGNAL</p>
+    <section className="feed" aria-label="Live findings">
+      <h2 className="panel-heading">Findings</h2>
       {!connected && (
-        <div className="ws-status">
-          <span className="dot reconnecting" />
+        <div className="ws-status" role="status">
+          <span className="dot reconnecting" aria-hidden="true" />
           reconnecting…
         </div>
       )}
-      <div className="status">
-        <span className={status === 'done' ? 'dot done' : 'dot'} />
+      <div className="status" role="status">
+        <span className={status === 'done' ? 'dot done' : 'dot'} aria-hidden="true" />
         {safeText(status || 'waiting')}
       </div>
       {missingContext.length > 0 && (
@@ -106,75 +94,107 @@ export function LiveFeed({
           PARSED <b>{safeText(x)}</b>
         </div>
       ))}
-      <div className="findings">
+      <div className="findings" role="log" aria-label="Streamed findings">
         {findings.length === 0 ? (
-          <p className="muted">The critics are standing by.</p>
+          <HearingPreview />
         ) : (
-          findings.map((f, i) => <FindingCard key={f.id || i} finding={f} onReply={onReply} />)
+          findings.map((finding, i) => <FindingCard key={finding.id || `finding-${i}`} finding={finding} onReply={onReply} />)
         )}
       </div>
     </section>
   );
 }
 
-function FindingCard({ finding: f, onReply }: { finding: Finding, onReply?: (findingId: string, reply: string) => void }) {
+function HearingPreview() {
+  const acts = [
+    { no: 'Act I', title: 'Input', body: 'Paste a spec. The gatekeeper splits it into sections.' },
+    { no: 'Act II', title: 'Attack', body: 'Each critic files findings as they land.' },
+    { no: 'Act III', title: 'Verdict', body: 'A revised spec plus a risk list with owners.' },
+  ];
+  return (
+    <div className="hearing-preview">
+      <ol className="preview-acts">
+        {acts.map((act) => (
+          <li key={act.title} className="preview-act">
+            <span className="preview-act-no">{act.no}</span>
+            <span className="preview-act-text">
+              <strong>{act.title}</strong> {act.body}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="preview-counsel-head">Seven specialists, standing by.</p>
+      <ul className="preview-counsel" aria-label="The seven critics">
+        {CRITICS.map((critic, i) => (
+          <li key={critic.id} className="preview-counsel-row">
+            <span className="preview-counsel-no">C-{String(i + 1).padStart(2, '0')}</span>
+            <span className="preview-counsel-name">{critic.title}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function FindingCard({ finding, onReply }: { finding: Finding, onReply?: (findingId: string, reply: string) => void }) {
   const [open, setOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
-  
-  const isDismissed = f.dismissed;
-  
+
+  const isDismissed = finding.dismissed;
+  const ruling = isDismissed
+    ? { stamp: 'Dismissed', className: 'ruling-overruled' }
+    : RULINGS[finding.severity] ?? RULINGS.significant;
+
+  const sendReply = () => {
+    if (!replyText.trim()) return;
+    onReply?.(finding.id, replyText);
+    setReplyText('');
+  };
+
   return (
-    <article className={`finding ${f.critic} ${isDismissed ? 'dismissed' : ''}`} style={isDismissed ? { opacity: 0.6 } : {}}>
+    <article className={`finding ${finding.critic} ${isDismissed ? 'dismissed' : ''}`} style={isDismissed ? { opacity: 0.6 } : {}}>
       <button type="button" className="finding-header" onClick={() => setOpen(!open)} aria-expanded={open}>
         <small>
-          {labels[f.critic]}{' '}
-          <span className={`badge ${f.severity}`}>{f.severity}</span>
-          {isDismissed && <span className="badge minor" style={{marginLeft: 8}}>Dismissed</span>}
+          <span className="counsel-name">{CRITIC_TITLES[finding.critic] ?? finding.critic}</span>{' '}
+          <span className={`stamp ${ruling.className}`}>{ruling.stamp}</span>
         </small>
-        <strong className={isDismissed ? 'finding-title-dismissed' : ''}>{safeText(f.claim)}</strong>
-        <span className={`finding-chevron ${open ? 'open' : ''}`}><ChevronRight size={14} /></span>
+        <strong className={isDismissed ? 'finding-title-dismissed' : ''}>{safeText(finding.claim)}</strong>
+        <span className={`finding-chevron ${open ? 'open' : ''}`} aria-hidden="true"><ChevronRight size={14} /></span>
       </button>
       {open && (
         <div className="finding-body">
-          <p>{safeText(f.critique)}</p>
-          {f.suggested_fix && (
-            <p className="fix"><CornerDownRight size={12} style={{ display: 'inline', marginRight: 4 }} /> {safeText(f.suggested_fix)}</p>
+          <p>{safeText(finding.critique)}</p>
+          {finding.suggested_fix && (
+            <p className="fix"><CornerDownRight size={12} style={{ display: 'inline', marginRight: 4 }} aria-hidden="true" /> {safeText(finding.suggested_fix)}</p>
           )}
-          
-          {f.thread && f.thread.length > 0 && (
+
+          {finding.thread && finding.thread.length > 0 && (
              <div className="finding-thread-container">
-               {f.thread.map((msg, idx) => (
-                 <div key={idx} className="thread-msg">
+               {finding.thread.map((msg) => (
+                 <div key={`${finding.id}-thread-${msg.role}-${msg.content.length}-${msg.content.slice(0, 32)}`} className="thread-msg">
                    <strong className="thread-msg-role">{msg.role}</strong>
                    <p className="thread-msg-content">{safeText(msg.content)}</p>
                  </div>
                ))}
              </div>
           )}
-          
+
           {onReply && !isDismissed && (
              <div className="reply-container">
-                <input 
-                  type="text" 
-                  value={replyText} 
-                  onChange={e => setReplyText(e.target.value)} 
+                <input
+                  type="text"
+                  value={replyText}
+                  onChange={e => setReplyText(e.target.value)}
                   placeholder="Push back or clarify..."
+                  aria-label={`Reply to finding ${safeText(finding.claim)}`}
                   className="reply-input"
                   onKeyDown={e => {
-                      if(e.key === 'Enter' && replyText.trim()) {
-                          onReply(f.id, replyText);
-                          setReplyText("");
-                      }
+                      if(e.key === 'Enter') sendReply();
                   }}
                 />
-                <button 
+                <button
                   type="button"
-                  onClick={() => {
-                      if(replyText.trim()) {
-                          onReply(f.id, replyText);
-                          setReplyText("");
-                      }
-                  }}
+                  onClick={sendReply}
                   className="reply-btn"
                 >
                   Reply

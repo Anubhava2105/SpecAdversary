@@ -1,12 +1,9 @@
 import { diffWords } from 'diff';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { safeText } from '../../lib/text';
 import type { Finding } from '../../types';
-
-const safeText = (value: string) =>
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitiser stripping control characters
-  value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 
 export function ReportView({
   raw,
@@ -22,7 +19,17 @@ export function ReportView({
   const [copied, setCopied] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const groups = ['structural', 'significant', 'minor'] as const;
-  const parts = diffWords(safeText(raw), safeText(revised));
+  // The word diff is O(n·m): compute only when the change set is open, so
+  // per-token streaming renders stay cheap. Positional keys are assigned here
+  // (not at render) because common words repeat and value keys would collide.
+  const parts = useMemo(
+    () =>
+      (diffOpen ? diffWords(safeText(raw), safeText(revised)) : []).map((part, index) => ({
+        part,
+        key: `diff-${index}`,
+      })),
+    [diffOpen, raw, revised],
+  );
 
   const copySpec = async () => {
     try {
@@ -47,8 +54,8 @@ export function ReportView({
   const printPdf = () => window.print();
 
   return (
-    <section className="report">
-      <p className="eyebrow">03 / REVISED SPEC</p>
+    <section className="report" aria-label="Revised specification">
+      <h2 className="panel-heading">Revised spec</h2>
 
       <div className="summary">
         {groups.map((g) => (
@@ -74,13 +81,13 @@ export function ReportView({
         {diffOpen && (
           <div className="diff">
             <article className="inline-diff">
-              {parts.map((p, i) =>
+              {parts.map(({ part: p, key }) =>
                 p.added ? (
-                  <ins key={i}>{safeText(p.value)}</ins>
+                  <ins key={key}>{safeText(p.value)}</ins>
                 ) : p.removed ? (
-                  <del key={i}>{safeText(p.value)}</del>
+                  <del key={key}>{safeText(p.value)}</del>
                 ) : (
-                  <span key={i}>{safeText(p.value)}</span>
+                  <span key={key}>{safeText(p.value)}</span>
                 ),
               )}
             </article>
@@ -91,18 +98,18 @@ export function ReportView({
       <div className="revised-header">
         <h2>Revised specification</h2>
         <div className="export-actions">
-          <button className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copySpec} title="Copy to clipboard">
+          <button type="button" className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copySpec} title="Copy to clipboard" aria-label="Copy revised spec to clipboard">
             {copied ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             )}
           </button>
-          <button className="export-btn" onClick={downloadMd} title="Download as .md">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <button type="button" className="export-btn" onClick={downloadMd} title="Download as .md" aria-label="Download revised spec as markdown">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           </button>
-          <button className="export-btn" onClick={printPdf} title="Print / Save as PDF">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          <button type="button" className="export-btn" onClick={printPdf} title="Print / Save as PDF" aria-label="Print revised spec or save as PDF">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           </button>
         </div>
       </div>

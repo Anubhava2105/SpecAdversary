@@ -1,6 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API } from './lib/api';
 
 interface AuthUser {
   id: string;
@@ -50,6 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(getStoredAccess());
   const [loading, setLoading] = useState(true);
+
+  // Silent refreshes (e.g. apiFetch's 401 retry) publish the fresh token here
+  // so every consumer picks it up without re-mounting.
+  useEffect(() => {
+    const onRefresh = (e: Event) => setToken((e as CustomEvent<string>).detail);
+    window.addEventListener('sa:token-refreshed', onRefresh);
+    return () => window.removeEventListener('sa:token-refreshed', onRefresh);
+  }, []);
 
   // Validate token on mount
   useEffect(() => {

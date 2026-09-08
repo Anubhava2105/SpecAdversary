@@ -28,8 +28,8 @@ export function LoginPage() {
         await signup(email, password, '', claimSessionId);
       }
       navigate('/app');
-    } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -84,16 +84,16 @@ export function LoginPage() {
 
           <div className="auth-divider">or</div>
 
-          <button className="oauth-btn" onClick={loginWithGoogle}>
+          <button type="button" className="oauth-btn" onClick={loginWithGoogle}>
             Continue with Google
           </button>
-          <button className="oauth-btn" onClick={loginWithGitHub}>
+          <button type="button" className="oauth-btn" onClick={loginWithGitHub}>
             Continue with GitHub
           </button>
 
           <div className="auth-toggle">
             {isLogin ? "Don't have an account?" : "Already have an account?"}
-            <button onClick={() => setIsLogin(!isLogin)}>
+            <button type="button" onClick={() => setIsLogin(!isLogin)}>
               {isLogin ? 'Sign Up' : 'Sign In'}
             </button>
           </div>

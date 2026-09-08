@@ -10,7 +10,8 @@ export function OAuthCallback() {
 
   useEffect(() => {
     const code = searchParams.get('code');
-    const provider = searchParams.get('provider');
+    const rawProvider = searchParams.get('provider');
+    const provider = rawProvider === 'google' || rawProvider === 'github' ? rawProvider : null;
     const claimSessionId = searchParams.get('claim_session') || undefined;
 
     if (!code || !provider) {
@@ -24,8 +25,8 @@ export function OAuthCallback() {
       .then(() => {
         navigate('/app');
       })
-      .catch((err: any) => {
-        setError(err.message || 'OAuth authentication failed');
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'OAuth authentication failed');
       });
   }, [searchParams, oauthCallback, navigate]);
 
@@ -34,7 +35,7 @@ export function OAuthCallback() {
       {error ? (
         <div>
           <p>Error: {error}</p>
-          <button onClick={() => navigate('/login')} className="auth-btn">
+          <button type="button" onClick={() => navigate('/login')} className="auth-btn">
             Back to Login
           </button>
         </div>

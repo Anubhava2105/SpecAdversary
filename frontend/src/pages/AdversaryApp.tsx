@@ -7,10 +7,9 @@ import { ReportView } from "../components/app/ReportView";
 import { RiskRegister } from "../components/app/RiskRegister";
 import { Sidebar } from "../components/app/Sidebar";
 import { SpecInput } from "../components/app/SpecInput";
+import { API, apiFetch, errorDetail, WS_BASE } from "../lib/api";
 import type { Critic, Finding, Session } from "../types";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const WS_BASE = API.replace("http", "ws");
 const MAX_BACKOFF_MS = 30_000;
 const MOBILE_BREAKPOINT = 900;
 
@@ -53,6 +52,10 @@ export default function App() {
 
   const retryCount = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
+  // Frames can arrive late or twice (replay + live tail overlap). Once `done`
+  // lands for this run, later token/status frames are stale. Ignore them so a
+  // stray token cannot append garbage to the finished spec.
+  const streamDone = useRef(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -62,6 +65,7 @@ export default function App() {
     : {};
 
   const newSession = () => {
+    streamDone.current = false;
     setRaw("");
     setFindings([]);
     setSections([]);
@@ -95,6 +99,7 @@ export default function App() {
       setMissingContext(x.missing_context || []);
       setRevised(x.revised_spec || "");
       setStatus(x.status);
+      streamDone.current = x.status === "done";
       setError("");
       setSelectedCritics(
         x.selected_critics || [
@@ -112,6 +117,7 @@ export default function App() {
   };
 
   const submit = async (spec: string, selectedCritics: Critic[]) => {
+    streamDone.current = false;
     setRaw(spec);
     setFindings([]);
     setSections([]);
@@ -131,7 +137,7 @@ export default function App() {
         }),
       });
       if (!r.ok) {
-        setError(`Failed to create session: ${r.status} ${r.statusText}`);
+        setError(await errorDetail(r, "Failed to create session"));
         setStatus("waiting");
         return;
       }
@@ -139,8 +145,8 @@ export default function App() {
       setId(x.id);
       history.replaceState(null, "", `?session=${x.id}`);
       setRefreshKey((k) => k + 1);
-    } catch (err: any) {
-      setError(`Network error: ${err.message}`);
+    } catch (err: unknown) {
+      setError(`Network error: ${err instanceof Error ? err.message : 'request failed'}`);
       setStatus("waiting");
     }
   };
@@ -197,14 +203,21 @@ export default function App() {
           setSections((v) => (v.includes(x.section) ? v : [...v, x.section]));
         if (x.type === "gatekeeper") setMissingContext(x.missing_context || []);
         if (x.type === "findings_moderated") setFindings(x.findings || []);
-        if (x.type === "status") setStatus(x.status);
-        if (x.type === "token") setRevised((v) => v + x.content);
+        if (x.type === "status" && !streamDone.current) setStatus(x.status);
+        if (x.type === "token" && !streamDone.current) setRevised((v) => v + x.content);
         if (x.type === "done") {
+          streamDone.current = true;
           setRevised(x.revised_spec);
           setStatus("done");
           setRefreshKey((k) => k + 1);
         }
-        if (x.type === "error") setError(x.message);
+        // Every error frame the backend emits is terminal for the run
+        // (session_busy, state_conflict, cancelled, …): surface the message
+        // and move the status off whatever it was stuck on.
+        if (x.type === "error") {
+          setError(x.code ? `${x.message} (${x.code})` : x.message);
+          setStatus("failed");
+        }
       };
 
       ws.onclose = () => {
@@ -250,11 +263,16 @@ export default function App() {
   const replyToFinding = async (findingId: string, reply: string) => {
     if (!id) return;
     try {
-      await fetch(`${API}/sessions/${id}/findings/${findingId}/reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ reply }),
-      });
+      const r = await apiFetch(
+        `${API}/sessions/${id}/findings/${findingId}/reply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reply }),
+        },
+        authHeaders,
+      );
+      if (!r.ok) setError(await errorDetail(r, "Reply failed"));
     } catch (e) {
       console.error(e);
     }
@@ -329,9 +347,9 @@ export default function App() {
       </div>
     </div>
   ) : (
-    <section className="report empty">
-      <p className="eyebrow">03 / REPORT</p>
-      <p>Revised spec will appear here when synthesis completes.</p>
+    <section className="report empty" aria-label="Revised specification">
+      <h2 className="panel-heading">Revised spec</h2>
+      <p>Run the critics and the revised spec appears here.</p>
       {error && (
         <p className="error" style={{ color: "#ff6b6b" }}>
           {error}
@@ -371,6 +389,7 @@ export default function App() {
         </div>
         <nav className="mobile-tab-bar">
           <button
+            type="button"
             className={`mobile-tab ${mobileTab === "input" ? "active" : ""}`}
             onClick={() => setMobileTab("input")}
           >
@@ -382,7 +401,7 @@ export default function App() {
               stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
-              strokeLinejoin="round"
+              strokeLinejoin="round" aria-hidden="true"
             >
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -390,6 +409,7 @@ export default function App() {
             Input
           </button>
           <button
+            type="button"
             className={`mobile-tab ${mobileTab === "feed" ? "active" : ""}`}
             onClick={() => setMobileTab("feed")}
           >
@@ -401,7 +421,7 @@ export default function App() {
               stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
-              strokeLinejoin="round"
+              strokeLinejoin="round" aria-hidden="true"
             >
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
             </svg>
@@ -411,6 +431,7 @@ export default function App() {
             )}
           </button>
           <button
+            type="button"
             className={`mobile-tab ${mobileTab === "report" ? "active" : ""}`}
             onClick={() => setMobileTab("report")}
           >
@@ -422,7 +443,7 @@ export default function App() {
               stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
-              strokeLinejoin="round"
+              strokeLinejoin="round" aria-hidden="true"
             >
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <polyline points="14 2 14 8 20 8" />
@@ -430,8 +451,9 @@ export default function App() {
             Report
           </button>
           {showRiskRegister && (
-            <button
-              className={`mobile-tab ${mobileTab === "risks" ? "active" : ""}`}
+              <button
+                type="button"
+                className={`mobile-tab ${mobileTab === "risks" ? "active" : ""}`}
               onClick={() => setMobileTab("risks")}
             >
               <svg
@@ -442,7 +464,7 @@ export default function App() {
                 stroke="currentColor"
                 strokeWidth="2"
                 strokeLinecap="round"
-                strokeLinejoin="round"
+                strokeLinejoin="round" aria-hidden="true"
               >
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>

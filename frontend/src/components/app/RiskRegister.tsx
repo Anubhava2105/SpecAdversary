@@ -1,11 +1,11 @@
-import {AlertTriangle, Calendar, CheckCircle, 
+import {AlertTriangle, Calendar, CheckCircle,
   ChevronRight, Clock, MessageSquare, RefreshCw, Search,
-  Shield, Target, User, X 
+  Shield, User, X
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Risk, RiskComment, RiskStatus, RiskSummary } from '../../types';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API } from '../../lib/api';
+import { CRITIC_TITLES, CRITICS, exhibitLetter } from '../../lib/critics';
+import type { Risk, RiskStatus, RiskSummary } from '../../types';
 
 const STATUS_META: Record<RiskStatus, { label: string; color: string; icon: React.ReactNode }> = {
   open: { label: 'Open', color: 'var(--color-significant)', icon: <AlertTriangle size={12} /> },
@@ -15,8 +15,6 @@ const STATUS_META: Record<RiskStatus, { label: string; color: string; icon: Reac
   dismissed: { label: 'Dismissed', color: 'var(--text-dim)', icon: <X size={12} /> },
   resolved: { label: 'Resolved', color: 'var(--accent-success)', icon: <CheckCircle size={12} /> },
 };
-
-const SEVERITY_ORDER: Record<string, number> = { structural: 0, significant: 1, minor: 2 };
 
 interface Props {
   sessionId: string;
@@ -38,6 +36,10 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('severity');
 
+  // Pager (the API caps pages at 200; the UI pages at 50)
+  const PAGE_SIZE = 50;
+  const [offset, setOffset] = useState(0);
+
   // Detail drawer
   const [selectedRiskId, setSelectedRiskId] = useState<string | null>(null);
   const [detailRisk, setDetailRisk] = useState<Risk | null>(null);
@@ -57,7 +59,8 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
       if (searchQuery) params.set('search', searchQuery);
       params.set('sort_by', sortBy);
       params.set('sort_dir', 'desc');
-      params.set('limit', '100');
+      params.set('offset', String(offset));
+      params.set('limit', String(PAGE_SIZE));
 
       const r = await fetch(`${API}/sessions/${sessionId}/risks?${params}`, { headers: authHeaders });
       if (!r.ok) throw new Error('Failed to load risks');
@@ -66,14 +69,20 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
       setTotal(data.total || 0);
       setSummary(data.summary || null);
       setError('');
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load risks');
     } finally {
       setLoading(false);
     }
-  }, [sessionId, statusFilter, severityFilter, criticFilter, searchQuery, sortBy, authHeaders]);
+  }, [sessionId, statusFilter, severityFilter, criticFilter, searchQuery, sortBy, offset, authHeaders]);
 
   useEffect(() => { fetchRisks(); }, [fetchRisks]);
+
+  // A new filter restarts paging from the first page.
+  const refilter = (apply: () => void) => {
+    setOffset(0);
+    apply();
+  };
 
   const fetchDetail = useCallback(async (riskId: string) => {
     setDetailLoading(true);
@@ -111,11 +120,11 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
       }
       const updated = await r.json();
       // Optimistic: update in list and detail
-      setRisks(prev => prev.map(r => r.id === riskId ? { ...r, ...updated } : r));
+      setRisks(prev => prev.map(prevRisk => prevRisk.id === riskId ? { ...prevRisk, ...updated } : prevRisk));
       if (detailRisk?.id === riskId) setDetailRisk(prev => prev ? { ...prev, ...updated } : prev);
       fetchRisks(); // Refresh summary counts
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Request failed');
     } finally {
       setSavingFields(prev => { const n = new Set(prev); n.delete(field); return n; });
     }
@@ -131,8 +140,8 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
       if (!r.ok) throw new Error('Comment failed');
       // Refresh detail
       fetchDetail(riskId);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Request failed');
     }
   };
 
@@ -143,8 +152,8 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
         headers: { 'Content-Type': 'application/json', ...authHeaders },
       });
       if (!r.ok) throw new Error('Re-evaluate failed');
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Request failed');
     }
   };
 
@@ -201,20 +210,25 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
           <input
             type="text"
             placeholder="Search risks..."
+            aria-label="Search risks"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="risk-search-input"
           />
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="risk-filter-select">
+        <select value={statusFilter} onChange={e => refilter(() => setStatusFilter(e.target.value))} className="risk-filter-select" aria-label="Filter by status">
           <option value="">All statuses</option>
           {Object.entries(STATUS_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
-        <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} className="risk-filter-select">
+        <select value={severityFilter} onChange={e => refilter(() => setSeverityFilter(e.target.value))} className="risk-filter-select" aria-label="Filter by severity">
           <option value="">All severities</option>
           <option value="structural">Structural</option>
           <option value="significant">Significant</option>
           <option value="minor">Minor</option>
+        </select>
+        <select value={criticFilter} onChange={e => refilter(() => setCriticFilter(e.target.value))} className="risk-filter-select" aria-label="Filter by critic">
+          <option value="">All critics</option>
+          {CRITICS.map(critic => <option key={critic.id} value={critic.id}>{critic.title}</option>)}
         </select>
         <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="risk-filter-select">
           <option value="severity">Sort: Severity</option>
@@ -243,7 +257,10 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
               <div className="risk-row-content">
                 <span className="risk-row-claim">{risk.claim}</span>
                 <span className="risk-row-meta">
-                  {risk.critic} · {risk.severity}
+                  <span className="risk-exhibit" title={`Filed by ${CRITIC_TITLES[risk.critic as keyof typeof CRITIC_TITLES] ?? risk.critic}`}>
+                    Ex. {exhibitLetter(risk.critic)}
+                  </span>
+                  {risk.severity}
                   {risk.due_date && <> · <Calendar size={10} /> {new Date(risk.due_date).toLocaleDateString()}</>}
                   {risk.owner_email && <> · <User size={10} /> {risk.owner_email.split('@')[0]}</>}
                 </span>
@@ -257,14 +274,40 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
         ))}
       </div>
 
+      {/* Pager */}
+      {total > PAGE_SIZE && (
+        <div className="risk-pager">
+          <button
+            type="button"
+            className="risk-action-btn"
+            disabled={offset === 0}
+            onClick={() => setOffset(o => Math.max(0, o - PAGE_SIZE))}
+          >
+            ← Newer
+          </button>
+          <span className="risk-pager-count" role="status">
+            {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
+          </span>
+          <button
+            type="button"
+            className="risk-action-btn"
+            disabled={offset + PAGE_SIZE >= total}
+            onClick={() => setOffset(o => o + PAGE_SIZE)}
+          >
+            Older →
+          </button>
+        </div>
+      )}
+
       {/* Detail drawer */}
       {selectedRiskId && (
         <>
-          <div className="risk-drawer-overlay" onClick={closeDetail} />
-          <aside className="risk-drawer">
+          <button type="button" className="risk-drawer-overlay" onClick={closeDetail} aria-label="Close detail drawer" />
+          <aside className="risk-drawer" aria-label="Risk detail">
             {detailLoading && !detailRisk && <p className="risk-empty">Loading…</p>}
             {detailRisk && (
               <RiskDetailView
+                key={detailRisk.id}
                 risk={detailRisk}
                 onClose={closeDetail}
                 onPatch={patchRisk}
@@ -308,6 +351,10 @@ function RiskDetailView({
   const [dueDate, setDueDate] = useState(risk.due_date ? risk.due_date.slice(0, 10) : '');
   const planTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  // The view is keyed by risk id, so state starts fresh per risk; the pending
+  // debounce is still cancelled on unmount so no write lands on another risk.
+  useEffect(() => () => clearTimeout(planTimer.current), []);
+
   // Debounced validation plan save
   const handlePlanChange = (value: string) => {
     setValidationPlan(value);
@@ -334,15 +381,17 @@ function RiskDetailView({
 
       <div className="risk-detail-meta">
         <RiskStatusBadge status={risk.status} />
+        <span className="risk-exhibit">Ex. {exhibitLetter(risk.critic)}</span>
         <span className={`risk-severity-dot severity-${risk.severity}`} />
         <span>{risk.severity}</span>
-        <span className="risk-detail-critic">{risk.critic}</span>
+        <span className="risk-detail-critic">{CRITIC_TITLES[risk.critic as keyof typeof CRITIC_TITLES] ?? risk.critic}</span>
       </div>
 
       {/* Status selector */}
       <div className="risk-detail-field">
-        <label className="risk-detail-label">Status</label>
+        <label className="risk-detail-label" htmlFor="risk-status">Status</label>
         <select
+          id="risk-status"
           value={risk.status}
           onChange={e => onPatch(risk.id, { status: e.target.value })}
           className="risk-filter-select"
@@ -354,22 +403,23 @@ function RiskDetailView({
 
       {/* Critique */}
       <div className="risk-detail-field">
-        <label className="risk-detail-label">Critique</label>
+        <span className="risk-detail-label">Critique</span>
         <p className="risk-detail-text">{risk.critique}</p>
       </div>
 
       {/* Suggested fix */}
       {risk.suggested_fix && (
         <div className="risk-detail-field">
-          <label className="risk-detail-label">Suggested Fix</label>
+          <span className="risk-detail-label">Suggested fix</span>
           <p className="risk-detail-text risk-detail-fix">{risk.suggested_fix}</p>
         </div>
       )}
 
       {/* Validation plan */}
       <div className="risk-detail-field">
-        <label className="risk-detail-label">Validation Plan</label>
+        <label className="risk-detail-label" htmlFor="risk-validation-plan">Validation plan</label>
         <textarea
+          id="risk-validation-plan"
           value={validationPlan}
           onChange={e => handlePlanChange(e.target.value)}
           placeholder="How will you verify this risk is addressed?"
@@ -381,7 +431,7 @@ function RiskDetailView({
 
       {/* Owner */}
       <div className="risk-detail-field">
-        <label className="risk-detail-label">Owner</label>
+        <span className="risk-detail-label">Owner</span>
         <div className="risk-owner-row">
           {risk.owner_email ? (
             <>
@@ -406,9 +456,10 @@ function RiskDetailView({
 
       {/* Due date */}
       <div className="risk-detail-field">
-        <label className="risk-detail-label">Due Date</label>
+        <label className="risk-detail-label" htmlFor="risk-due-date">Due date</label>
         <div className="risk-owner-row">
           <input
+            id="risk-due-date"
             type="date"
             value={dueDate}
             onChange={e => {
@@ -436,17 +487,17 @@ function RiskDetailView({
 
       {/* Comments */}
       <div className="risk-detail-field">
-        <label className="risk-detail-label">
-          <MessageSquare size={12} /> Comments ({risk.comments?.length || 0})
-        </label>
+        <span className="risk-detail-label">
+          <MessageSquare size={12} aria-hidden="true" /> Comments ({risk.comments?.length || 0})
+        </span>
         <div className="risk-comments-list">
-          {risk.comments?.map(c => (
-            <div key={c.id} className="risk-comment">
+          {risk.comments?.map(comment => (
+            <div key={comment.id} className="risk-comment">
               <div className="risk-comment-header">
-                <span className="risk-comment-author">{c.author_email || 'Guest'}</span>
-                <span className="risk-comment-time">{new Date(c.created_at).toLocaleString()}</span>
+                <span className="risk-comment-author">{comment.author_email || 'Guest'}</span>
+                <span className="risk-comment-time">{new Date(comment.created_at).toLocaleString()}</span>
               </div>
-              <p className="risk-comment-body">{c.body}</p>
+              <p className="risk-comment-body">{comment.body}</p>
             </div>
           ))}
         </div>
@@ -456,6 +507,7 @@ function RiskDetailView({
             value={commentText}
             onChange={e => setCommentText(e.target.value)}
             placeholder="Add a comment…"
+            aria-label="Add a comment"
             className="risk-comment-input"
             onKeyDown={e => { if (e.key === 'Enter') handleSubmitComment(); }}
           />
