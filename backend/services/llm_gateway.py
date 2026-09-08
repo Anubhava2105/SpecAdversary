@@ -68,6 +68,14 @@ def charge_tokens(prompt_tokens: int, completion_tokens: int) -> None:
         raise BudgetExceeded(f"Run token budget exhausted ({budget.used}/{budget.limit})")
 
 
+def budget_remaining() -> int | None:
+    """Tokens left in the active budget, or None when no budget is active."""
+    budget = _budget_var.get()
+    if budget is None:
+        return None
+    return budget.limit - budget.used
+
+
 def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
@@ -144,9 +152,15 @@ async def stream_completion(
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
                     characters += len(delta)
+                    remaining = budget_remaining()
+                    if remaining is not None and characters // _CHARS_PER_TOKEN_ESTIMATE >= remaining:
+                        raise BudgetExceeded(
+                            f"Run token budget exhausted mid-stream ({characters} chars)"
+                        )
                     yield chunk
         finally:
             # Streams rarely report usage; approximate from generated text.
-            charge_tokens(0, max(1, characters // _CHARS_PER_TOKEN_ESTIMATE))
+            # Empty (failed) streams charge nothing.
+            charge_tokens(0, characters // _CHARS_PER_TOKEN_ESTIMATE)
 
     return guarded()

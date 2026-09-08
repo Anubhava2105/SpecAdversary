@@ -41,6 +41,26 @@ _FORWARD: dict[SessionStatus, set[SessionStatus]] = {
 _IN_FLIGHT = set(_FORWARD)
 _TERMINAL_RUN_STATUSES = {RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled}
 
+# Forward run progression. A queued run may fail before starting (missing
+# session); a running run ends in exactly one terminal status. Terminal
+# statuses never move again — retries and re-evaluations create new runs.
+_RUN_FORWARD: dict[RunStatus, set[RunStatus]] = {
+    RunStatus.queued: {RunStatus.running, RunStatus.failed, RunStatus.cancelled},
+    RunStatus.running: {RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled},
+}
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    """Interpret a naive datetime as UTC; pass through aware values and None.
+
+    SQLite returns naive datetimes for tz-aware inserts — every staleness and
+    age comparison in the system goes through here so the assumption lives in
+    one place.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
 
 def accepts_client_activity(status: SessionStatus) -> bool:
     """May clients mutate this session's findings/risks right now?
@@ -104,7 +124,10 @@ def transition_run(
     run fails, the session is also moved to failed — but only while it is
     still in flight, so reaping a stale orphaned run never corrupts a session
     that already finished. Returns the status events a caller should publish.
+    Raises IllegalTransition without mutating anything if the move is not legal.
     """
+    if not _run_transition_legal(run.status, to):
+        raise IllegalTransition(f"Illegal run transition: {run.status.value} -> {to.value}")
     now = at or datetime.now(timezone.utc)
     run.status = to
     if to is RunStatus.running:
@@ -119,6 +142,12 @@ def transition_run(
         transition_session(cascade_session, SessionStatus.failed)
         events.extend(status_events(cascade_session.status))
     return events
+
+
+def _run_transition_legal(current: RunStatus, to: RunStatus) -> bool:
+    if current == to:
+        return True  # idempotent write
+    return to in _RUN_FORWARD.get(current, set())
 
 
 def _session_transition_legal(current: SessionStatus, to: SessionStatus) -> bool:

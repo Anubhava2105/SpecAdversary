@@ -12,6 +12,7 @@ from services.llm_gateway import (
     completion_message,
     end_token_budget,
     model_for,
+    stream_completion,
 )
 
 
@@ -95,3 +96,39 @@ def test_only_successful_attempt_is_charged():
     asyncio.run(completion_message(client, messages=[], timeout=5, operation="structured_parse", retries=2))
     assert calls["n"] == 2           # first attempt failed, second succeeded
     assert end_token_budget() == 150  # only the successful attempt is charged
+
+
+# ── Streaming budget ────────────────────────────────────────────────────
+def _stream_client(chunks: list[str]):
+    async def gen():
+        for c in chunks:
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=c))])
+
+    async def create(**kwargs):
+        return gen()
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def test_long_stream_trips_budget_mid_stream():
+    begin_token_budget(limit=10)  # ~10 tokens ≈ 40 chars
+    stream = asyncio.run(stream_completion(_stream_client(["x" * 20] * 10), messages=[], timeout=5, operation="markdown_synthesis"))
+
+    async def drain():
+        async for _ in stream:
+            pass
+
+    with pytest.raises(BudgetExceeded):
+        asyncio.run(drain())
+
+
+def test_empty_stream_charges_nothing():
+    begin_token_budget(limit=10**9)
+    stream = asyncio.run(stream_completion(_stream_client([]), messages=[], timeout=5, operation="markdown_synthesis"))
+
+    async def drain():
+        async for _ in stream:
+            pass
+
+    asyncio.run(drain())
+    assert end_token_budget() == 0  # failed/empty streams cost nothing

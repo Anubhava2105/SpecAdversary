@@ -1,7 +1,6 @@
 """Small Redis queue adapter. API processes enqueue; workers consume."""
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from uuid import UUID
@@ -41,8 +40,10 @@ async def dequeue_run(timeout_seconds: int = 5) -> UUID | None:
             return None
         _, payload = item
         return UUID(json.loads(payload)["run_id"])
-    except (TimeoutError, ConnectionError, RedisTimeoutError, asyncio.exceptions.CancelledError):
-        # Ignore read timeouts or transient connection drops and loop again
+    except (TimeoutError, ConnectionError, RedisTimeoutError):
+        # Ignore read timeouts or transient connection drops and loop again.
+        # asyncio.CancelledError deliberately propagates so worker shutdown
+        # (and the reap timer) can never hang inside a blocking pop.
         return None
 
 

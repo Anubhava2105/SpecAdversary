@@ -141,10 +141,15 @@ def create_websocket_ticket(user_id: UUID) -> str:
     )
 
 
-def decode_token(token: str, expected_type: str = "access") -> dict:
-    """Decode and validate a JWT. Raises HTTPException on failure."""
+def decode_token(token: str, expected_type: str = "access", verify_exp: bool = True) -> dict:
+    """Decode and validate a JWT. Raises HTTPException on failure.
+
+    Pass verify_exp=False only when expiry must not block the operation
+    (logout revokes by DB row, so an expired token still logs the user out).
+    The signature is always verified.
+    """
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": verify_exp})
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     if payload.get("type") != expected_type:

@@ -86,6 +86,43 @@ def test_transition_run_sets_finished_at_on_terminal(terminal):
     assert run.finished_at is not None
 
 
+# ── Run legality table (hardcoded expectations, not derived from the impl) ──
+RUN_LEGAL = {
+    (RunStatus.queued, RunStatus.running),
+    (RunStatus.queued, RunStatus.failed),  # fail-fast before start (missing session)
+    (RunStatus.queued, RunStatus.cancelled),
+    (RunStatus.running, RunStatus.succeeded),
+    (RunStatus.running, RunStatus.failed),
+    (RunStatus.running, RunStatus.cancelled),
+}
+
+ALL_RUNS = [RunStatus.queued, RunStatus.running, RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled]
+
+
+@pytest.mark.parametrize("frm", ALL_RUNS)
+@pytest.mark.parametrize("to", ALL_RUNS)
+def test_run_transition_table(frm, to):
+    """Every (from, to) run pair is either explicitly legal or must raise."""
+    run = make_run(frm)
+    legal = frm == to or (frm, to) in RUN_LEGAL  # idempotent writes are always legal
+    if legal:
+        transition_run(run, to)
+        assert run.status == to
+    else:
+        with pytest.raises(IllegalTransition):
+            transition_run(run, to)
+        assert run.status == frm  # rejected transition mutates nothing
+
+
+def test_illegal_run_transition_sets_no_timestamps():
+    run = make_run(RunStatus.succeeded)
+    assert run.finished_at is None
+    with pytest.raises(IllegalTransition):
+        transition_run(run, RunStatus.running)  # resurrection is illegal
+    assert run.status == RunStatus.succeeded
+    assert run.started_at is None and run.finished_at is None
+
+
 # ── Cascade rule: run failure flips the session only while it's in flight ──
 @pytest.mark.parametrize("session_status", IN_FLIGHT)
 def test_failed_run_cascades_to_in_flight_session(session_status):
@@ -109,7 +146,7 @@ def test_failed_run_does_not_cascade_to_terminal_session(session_status):
 
 
 def test_successful_run_does_not_cascade():
-    run = make_run()
+    run = make_run(RunStatus.running)
     session = _session(SessionStatus.synthesizing)
     events = transition_run(run, RunStatus.succeeded, cascade_session=session)
     assert session.status == SessionStatus.synthesizing  # success path sets `done` explicitly itself

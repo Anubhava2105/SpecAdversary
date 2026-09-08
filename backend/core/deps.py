@@ -46,6 +46,8 @@ def validate_production_config() -> None:
     frontend = os.getenv("FRONTEND_URL", "")
     if not frontend or "localhost" in frontend or "127.0.0.1" in frontend:
         problems.append("FRONTEND_URL must be set to the production public origin")
+    if os.getenv("RATELIMIT_STORAGE_URI", "memory://") == "memory://":
+        problems.append("RATELIMIT_STORAGE_URI must point at shared Redis so replicas share buckets")
     if problems:
         raise RuntimeError("Refusing to start in production with unsafe configuration: " + "; ".join(problems))
 
@@ -126,21 +128,32 @@ def reject_prompt_injection(raw_spec: str, client_ip: str) -> None:
         audit_logger.warning("prompt_injection_blocked - IP: %s - Preview: %s", client_ip, raw_spec[:200])
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Spec contains a disallowed prompt-injection phrase")
 
+def _utc_day_start() -> datetime:
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def per_user_sessions_today(db: Session, user_id: UUID) -> int:
+    """Sessions this user created since UTC midnight — the single home for the
+    per-user count so the pre-check and the insert-time enforcement agree."""
+    return db.exec(
+        select(func.count(col(SpecSession.id))).where(
+            SpecSession.user_id == user_id,
+            SpecSession.created_at >= _utc_day_start(),
+        )
+    ).one()
+
+
 def reserve_daily_session(user: User | None = None) -> None:
     """Reserve one of today's session budget slots.
 
-    Authenticated users draw from a per-user allowance first; the global
-    SQLite-backed budget remains as a runaway backstop.
+    Authenticated users draw from a per-user allowance first (best-effort
+    pre-check; the authoritative enforcement happens inside the session-insert
+    transaction in the sessions route); the global SQLite-backed budget
+    remains as an atomic runaway backstop.
     """
     if user is not None:
-        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         with Session(engine) as db:
-            created_today = db.exec(
-                select(func.count(col(SpecSession.id))).where(
-                    SpecSession.user_id == user.id,
-                    SpecSession.created_at >= day_start,
-                )
-            ).one()
+            created_today = per_user_sessions_today(db, user.id)
         if created_today >= PER_USER_DAILY_LIMIT:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

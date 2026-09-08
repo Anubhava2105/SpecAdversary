@@ -1,4 +1,4 @@
-"""Durable execution boundary for LangGraph analysis jobs."""
+"""Durable execution boundary for LangGraph analyses."""
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +16,7 @@ from db.database import engine
 from db.models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSession
 from services import lifecycle
 from services.graph import spec_graph
+from services.lifecycle import IllegalTransition, as_utc
 from services.llm_gateway import RUN_TOKEN_BUDGET, BudgetExceeded, begin_token_budget, end_token_budget
 from services.risk_service import upsert_risks_from_findings
 
@@ -29,10 +30,11 @@ RUN_STALL_SECONDS = int(os.getenv("RUN_STALL_SECONDS", "300"))
 RUN_MAX_AGE_SECONDS = int(os.getenv("RUN_MAX_AGE_SECONDS", str(PIPELINE_TIMEOUT_SECONDS + 90)))
 
 
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+def _save(db: Session, *rows) -> None:
+    """Add rows and commit — the shared tail of every transition helper."""
+    for row in rows:
+        db.add(row)
+    db.commit()
 
 
 async def emit_event(run_id: UUID, event: dict) -> None:
@@ -57,27 +59,34 @@ async def emit_event(run_id: UUID, event: dict) -> None:
 
 
 async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
-    """Mark orphaned `running` runs as failed and surface a terminal WS event.
+    """Mark orphaned runs as failed and surface a terminal WS event.
 
-    A run is stuck when its latest RunEvent (or start) is older than
-    RUN_STALL_SECONDS, or when it exceeds RUN_MAX_AGE_SECONDS outright.
-    Without this, a crashed worker leaves the session spinning forever.
+    A `running` run is stuck when its latest RunEvent (or start) is older
+    than RUN_STALL_SECONDS, or when it exceeds RUN_MAX_AGE_SECONDS outright.
+    A `queued` run older than RUN_MAX_AGE_SECONDS lost its worker before it
+    ever started — without this its session spins in `parsing` forever.
+    Without reaping, a crashed worker leaves the session spinning forever.
     """
     now = now or datetime.now(timezone.utc)
     reaped: list[UUID] = []
     terminal_events: dict[UUID, list[dict]] = {}
+    reaped_codes: dict[UUID, str] = {}
     with Session(engine) as db:
-        running = db.exec(select(AnalysisRun).where(AnalysisRun.status == RunStatus.running)).all()
-        for run in running:
-            started = _as_utc(run.started_at) or _as_utc(run.created_at) or now
-            latest_event_at = _as_utc(
+        stuck = db.exec(
+            select(AnalysisRun).where(
+                (AnalysisRun.status == RunStatus.running) | (AnalysisRun.status == RunStatus.queued)
+            )
+        ).all()
+        for run in stuck:
+            started = as_utc(run.started_at) or as_utc(run.created_at) or now
+            latest_event_at = as_utc(
                 db.exec(select(func.max(RunEvent.created_at)).where(RunEvent.run_id == run.id)).one()
             )
             last_activity = max(started, latest_event_at) if latest_event_at else started
             idle_seconds = (now - last_activity).total_seconds()
             age_seconds = (now - started).total_seconds()
 
-            stalled = idle_seconds > RUN_STALL_SECONDS
+            stalled = run.status == RunStatus.running and idle_seconds > RUN_STALL_SECONDS
             too_old = age_seconds > RUN_MAX_AGE_SECONDS
             if not (stalled or too_old):
                 continue
@@ -94,18 +103,17 @@ async def reap_stuck_runs(now: datetime | None = None) -> list[UUID]:
                 error_code=code,
                 error_message="Analysis interrupted. Please try again.",
             )
-            db.add(run)
-            if session is not None:
-                db.add(session)
+            _save(db, run, *( [session] if session is not None else []))
 
             logger.warning("Reaped %s run %s (idle=%ds age=%ds)", code, run.id, idle_seconds, age_seconds)
             reaped.append(run.id)
             terminal_events[run.id] = events
-        db.commit()
+            reaped_codes[run.id] = code
 
     for run_id in reaped:
         # Terminal events after commit so connected and reconnecting clients see the failure.
-        await emit_event(run_id, {"type": "error", "message": "Analysis interrupted. Please try again.", "code": "run_interrupted"})
+        # The published code matches the persisted error_code (no silent translation).
+        await emit_event(run_id, {"type": "error", "message": "Analysis interrupted. Please try again.", "code": reaped_codes[run_id]})
         for event in terminal_events.get(run_id, []):
             await emit_event(run_id, event)
     return reaped
@@ -137,8 +145,7 @@ def _apply_session_transition(session_id: UUID, to: SessionStatus, **values) -> 
         except lifecycle.IllegalTransition:
             logger.warning("Skipped illegal session %s transition to %s", session_id, to.value)
             return []
-        db.add(row)
-        db.commit()
+        _save(db, row)
         return events
 
 
@@ -151,10 +158,7 @@ def _apply_run_transition(run_id: UUID, to: RunStatus, cascade: bool = False, at
             return []
         cascade_session = db.get(SpecSession, run.session_id) if cascade else None
         events = lifecycle.transition_run(run, to, cascade_session=cascade_session, at=at, **values)
-        db.add(run)
-        if cascade_session is not None:
-            db.add(cascade_session)
-        db.commit()
+        _save(db, run, *( [cascade_session] if cascade_session is not None else []))
         return events
 
 
@@ -172,16 +176,32 @@ async def execute_run(run_id: UUID) -> None:
             return
         lifecycle.transition_run(run, RunStatus.running)
         run.attempt += 1
-        lifecycle.transition_session(session, SessionStatus.parsing)
-        db.add(run)
-        db.add(session)
-        db.commit()
-        session_id = session.id
-        raw_spec = session.raw_spec
-        selected_critics = session.selected_critics
-        finding_id = run.re_evaluate_finding_id
-        existing_findings = session.findings
-        parsed_sections = session.parsed_sections
+        try:
+            lifecycle.transition_session(session, SessionStatus.parsing)
+        except IllegalTransition:
+            # Another run already owns this session (concurrent dispatch):
+            # don't hijack it — fail this run and stop.
+            run_id = run.id
+            lifecycle.transition_run(
+                run, RunStatus.failed, error_code="session_busy",
+                error_message="Session is already being analyzed by another run.",
+            )
+            _save(db, run)
+            session_busy = True
+        else:
+            _save(db, run, session)
+            session_id = session.id
+            run_id = run.id
+            session_busy = False
+            raw_spec = session.raw_spec
+            selected_critics = session.selected_critics
+            finding_id = run.re_evaluate_finding_id
+            existing_findings = session.findings
+            parsed_sections = session.parsed_sections
+
+    if session_busy:
+        await emit_event(run_id, {"type": "error", "message": "Session is already being analyzed by another run.", "code": "session_busy"})
+        return
 
     await emit_event(run_id, {"type": "status", "status": SessionStatus.parsing.value})
     final: dict = {}
@@ -209,12 +229,18 @@ async def execute_run(run_id: UUID) -> None:
                         else:
                             _apply_session_transition(session_id, next_status)
                 elif mode == "updates" and isinstance(data, dict):
-                    for update in data.values():
+                    for node, update in data.items():
                         if not isinstance(update, dict):
                             continue
                         for key, value in update.items():
                             if key == "findings" and isinstance(value, list):
-                                final.setdefault("findings", []).extend(value)
+                                if node in ("re_evaluate", "synthesizer"):
+                                    # These nodes return the complete list, not
+                                    # a delta — replacing avoids double-counting
+                                    # (accumulated critic rows + the full list).
+                                    final["findings"] = list(value)
+                                else:
+                                    final.setdefault("findings", []).extend(value)
                             else:
                                 final[key] = value
                         persisted = {key: update[key] for key in ("parsed_sections", "missing_context") if key in update}
@@ -228,7 +254,13 @@ async def execute_run(run_id: UUID) -> None:
         await asyncio.wait_for(stream(), timeout=PIPELINE_TIMEOUT_SECONDS)
         revised_spec = final.get("revised_spec", raw_spec)
         findings = final.get("moderated_findings", final.get("findings", []))
-        _apply_session_transition(session_id, SessionStatus.done, findings=findings, revised_spec=revised_spec)
+        done_events = _apply_session_transition(session_id, SessionStatus.done, findings=findings, revised_spec=revised_spec)
+        if not done_events and _session_terminal_state(session_id):
+            # The session moved to `failed` while this run was working (e.g.
+            # the reaper collected a stale view): reporting success would leave
+            # a succeeded run attached to a failed session. Fail honestly.
+            await _fail_run(run_id, "state_conflict", "Analysis failed. Please try again.")
+            return
         # Upsert normalized risk rows from the final findings
         try:
             upsert_risks_from_findings(session_id, findings, run_id)
@@ -250,6 +282,13 @@ async def execute_run(run_id: UUID) -> None:
         used = end_token_budget()
         if used:
             logger.info("run=%s token_usage=%d budget_limit=%d", run_id, used, RUN_TOKEN_BUDGET)
+
+
+def _session_terminal_state(session_id: UUID) -> bool:
+    """True when the session is no longer acceptably completable (failed)."""
+    with Session(engine) as db:
+        row = db.get(SpecSession, session_id)
+        return row is not None and row.status == SessionStatus.failed
 
 
 async def _fail_run(run_id: UUID, code: str, message: str) -> None:

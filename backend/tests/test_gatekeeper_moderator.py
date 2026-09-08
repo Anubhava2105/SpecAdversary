@@ -37,11 +37,24 @@ def test_complete_spec_has_no_missing_context():
     assert compute_missing_context(parsed) == []
 
 
-def test_moderated_findings_are_a_separate_replacement_value():
-    raw = [finding("one"), finding("two", claim="Architecture", critique="Queue lacks retries")]
-    moderated = deterministic_moderation(raw)
-    assert moderated is not raw
-    assert len(moderated) == 2
+def test_explicit_empty_report_does_not_fall_back_to_parser():
+    # An explicit [] means "nothing missing" — only empty canonical fields apply.
+    parsed = ParsedSpec(
+        problem_statement="p", target_users="u", core_solution="s",
+        technical_architecture="t", business_model="b", risks="r",
+        missing_context=["risks"],
+    )
+    assert compute_missing_context(parsed, []) == []
+
+
+def test_moderation_tolerates_unknown_severity_and_dedupes():
+    rows = [
+        finding("bad-sev", severity="catastrophic"),
+        finding("dup-a", claim="Same", critique="Same"),
+        finding("dup-b", claim="same ", critique=" same"),
+    ]
+    moderated = deterministic_moderation(rows)
+    assert {m["id"] for m in moderated} == {"bad-sev", "dup-a"}  # no KeyError, one dupe dropped
 
 
 def test_moderation_preserves_ids_threads_and_filters_dismissed():

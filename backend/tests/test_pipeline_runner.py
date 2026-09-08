@@ -5,6 +5,7 @@ the durable-execution boundary (state transitions, event persistence, risk
 upsert) without any LLM or Redis dependency.
 """
 import asyncio
+from typing import TypeVar
 from uuid import uuid4
 
 import pytest
@@ -53,7 +54,18 @@ def _yield(*updates):
     return gen
 
 
-def _get_detached(db, model, key):
+def _yield_named(*named_updates):
+    """Like _yield but with explicit (node_name, update) pairs."""
+    async def gen(_state):
+        for node, update in named_updates:
+            yield "updates", {node: update}
+    return gen
+
+
+_T = TypeVar("_T")
+
+
+def _get_detached(db: Session, model: type[_T], key) -> _T:
     """Load an entity and detach it so its loaded state survives session close."""
     row = db.get(model, key)
     assert row is not None
@@ -158,6 +170,7 @@ def test_execute_run_ignores_non_queued_runs():
     session_id, run_id = make_session_and_run()
     with Session(pipeline_runner.engine) as db:
         row = db.get(AnalysisRun, run_id)
+        assert row is not None
         row.status = RunStatus.running
         db.add(row)
         db.commit()
@@ -181,4 +194,90 @@ def test_execute_run_missing_session_fails_fast():
     run = get_run(orphan_run.id)
     assert run.status == RunStatus.failed
     assert run.error_code == "session_missing"
+
+
+def test_execute_run_does_not_double_count_full_list_updates(monkeypatch):
+    """Nodes returning complete finding lists (re-evaluate/synthesizer) replace,
+    they must not append onto already-accumulated critic rows."""
+    critic_finding = {
+        "id": "C1", "critic": "assumption", "severity": "minor",
+        "claim": "c", "critique": "x", "suggested_fix": "f",
+    }
+    full_list = [
+        {**critic_finding, "id": "C1"},
+        {"id": "C2", "critic": "assumption", "severity": "minor", "claim": "c2", "critique": "x2", "suggested_fix": "f2"},
+    ]
+    graph = FakeGraph(_yield_named(
+        ("assumption_hunter", {"findings": [critic_finding]}),
+        ("synthesizer", {"findings": full_list, "revised_spec": "R"}),
+    ))
+    monkeypatch.setattr(pipeline_runner, "spec_graph", graph)
+
+    session_id, run_id = make_session_and_run()
+    asyncio.run(pipeline_runner.execute_run(run_id))
+
+    session = get_session(session_id)
+    assert [f["id"] for f in session.findings] == ["C1", "C2"]
+
+
+def test_execute_run_budget_exceeded_fails_cleanly(monkeypatch):
+    from services.llm_gateway import BudgetExceeded
+
+    async def over_budget(state):
+        raise BudgetExceeded("Run token budget exhausted (1/1)")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(pipeline_runner, "spec_graph", FakeGraph(over_budget))
+
+    session_id, run_id = make_session_and_run()
+    asyncio.run(pipeline_runner.execute_run(run_id))
+
+    run = get_run(run_id)
+    assert run.status == RunStatus.failed
+    assert run.error_code == "budget_exceeded"
+    assert get_session(session_id).status == SessionStatus.failed
+
+
+def test_execute_run_refuses_to_hijack_in_flight_session(monkeypatch):
+    graph = FakeGraph(_yield({"revised_spec": "R"}))
+    monkeypatch.setattr(pipeline_runner, "spec_graph", graph)
+
+    session_id, run_id = make_session_and_run()
+    with Session(pipeline_runner.engine) as db:
+        row = db.get(SpecSession, session_id)
+        assert row is not None
+        row.status = SessionStatus.critiquing  # owned by another run
+        db.add(row)
+        db.commit()
+
+    asyncio.run(pipeline_runner.execute_run(run_id))
+
+    run = get_run(run_id)
+    assert run.status == RunStatus.failed
+    assert run.error_code == "session_busy"
+    assert graph.calls == []  # graph never ran
+    assert get_session(session_id).status == SessionStatus.critiquing  # untouched
+
+
+def test_execute_run_marks_state_conflict_when_session_failed_mid_run(monkeypatch):
+    """If the session failed while the run was working, success must not be reported."""
+    async def gen(_state):
+        yield "updates", {"synthesizer": {"revised_spec": "R"}}
+        # Simulate the reaper failing the session mid-stream.
+        with Session(pipeline_runner.engine) as db:
+            row = db.get(SpecSession, session_id)
+            assert row is not None
+            row.status = SessionStatus.failed
+            db.add(row)
+            db.commit()
+
+    monkeypatch.setattr(pipeline_runner, "spec_graph", FakeGraph(gen))
+
+    session_id, run_id = make_session_and_run()
+    asyncio.run(pipeline_runner.execute_run(run_id))
+
+    run = get_run(run_id)
+    assert run.status == RunStatus.failed
+    assert run.error_code == "state_conflict"
+    assert get_session(session_id).status == SessionStatus.failed
 

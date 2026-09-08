@@ -51,7 +51,9 @@ def _make_run(
 
 def _get_run(run_id) -> AnalysisRun:
     with Session(engine) as db:
-        return db.get(AnalysisRun, UUID(run_id))
+        row = db.get(AnalysisRun, UUID(run_id))
+        assert row is not None
+        return row
 
 
 def test_recent_active_run_is_untouched():
@@ -69,7 +71,9 @@ def test_idle_run_reaped_after_stall_threshold():
     assert row.status == RunStatus.failed
     assert row.error_code == "run_stalled"
     with Session(engine) as db:
-        assert db.get(SpecSession, UUID(session_id)).status == SessionStatus.failed
+        session_row = db.get(SpecSession, UUID(session_id))
+        assert session_row is not None
+        assert session_row.status == SessionStatus.failed
         events = db.exec(select(RunEvent).where(RunEvent.run_id == UUID(run_id))).all()
         types = [e.type for e in events]
         assert "error" in types and "status" in types
@@ -88,11 +92,22 @@ def test_old_run_reaped_by_age_backstop_despite_fresh_events():
 
 
 def test_queued_and_terminal_runs_untouched():
-    queued_id, _ = _make_run(status=RunStatus.queued, started_delta=5000)
+    queued_id, _ = _make_run(status=RunStatus.queued, started_delta=60)
     done_id, _ = _make_run(status=RunStatus.succeeded, started_delta=5000)
     assert asyncio.run(reap_stuck_runs()) == []
     assert _get_run(queued_id).status == RunStatus.queued
     assert _get_run(done_id).status == RunStatus.succeeded
+
+
+def test_ancient_queued_run_reaped_by_age_backstop():
+    # A queued run older than RUN_MAX_AGE_SECONDS lost its worker before ever
+    # starting; leaving it would spin its session in `parsing` forever.
+    run_id, _ = _make_run(status=RunStatus.queued, started_delta=pipeline_runner.RUN_MAX_AGE_SECONDS + 60)
+    reaped = asyncio.run(reap_stuck_runs())
+    assert UUID(run_id) in reaped
+    row = _get_run(run_id)
+    assert row.status == RunStatus.failed
+    assert row.error_code == "run_timeout"
 
 
 def test_reaper_is_idempotent():

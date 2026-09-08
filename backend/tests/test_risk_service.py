@@ -100,6 +100,21 @@ def test_backfill_from_legacy_session():
         assert len(risks) == 2
 
 
+def test_backfill_completes_partial_state():
+    with Session(engine) as db:
+        findings = _sample_findings(3)
+        session = _make_session(db, findings=findings)
+
+        upsert_risks_from_findings(session.id, findings[:1])  # partial: only f0
+        backfilled = backfill_risks_for_session(session.id)
+
+        assert {r.finding_id for r in backfilled} == {"f1", "f2"}  # only the gaps
+        risks = db.exec(
+            __import__("sqlmodel").select(Risk).where(Risk.session_id == session.id)
+        ).all()
+        assert len(risks) == 3
+
+
 def test_backfill_idempotent():
     with Session(engine) as db:
         findings = _sample_findings(2)
@@ -120,29 +135,32 @@ def test_status_transitions():
     assert validate_status_transition(RiskStatus.open, RiskStatus.open) is True
 
 
+def test_unknown_statuses_are_never_legal():
+    assert validate_status_transition("bogus", "bogus") is False
+    assert validate_status_transition("open", "bogus") is False
+    assert validate_status_transition("bogus", "open") is False
+    assert validate_status_transition("open", "mitigating") is True  # plain strings still work
+
+
 # ── get_risk_summary ──────────────────────────────────────────────────────
-def test_resolved_at_auto_set():
+def test_summary_reports_every_key():
     with Session(engine) as db:
         session = _make_session(db)
-        findings = _sample_findings(1)
+        findings = _sample_findings(3)
         risks = upsert_risks_from_findings(session.id, findings)
-        risk = risks[0]
-
-        # Resolve
-        risk.status = RiskStatus.resolved.value
-        risk.resolved_at = datetime.now(timezone.utc)
-        db.add(risk)
+        risks[0].status = RiskStatus.resolved.value
+        risks[0].resolved_at = datetime.now(timezone.utc)
+        for r in risks:
+            db.add(r)
         db.commit()
-        db.refresh(risk)
-        assert risk.resolved_at is not None
 
-        # Reopen
-        risk.status = RiskStatus.open.value
-        risk.resolved_at = None
-        db.add(risk)
-        db.commit()
-        db.refresh(risk)
-        assert risk.resolved_at is None
+        summary = get_risk_summary(session.id)
+        assert summary["total"] == 3
+        assert summary["by_status"] == {"resolved": 1, "open": 2}
+        assert summary["by_severity"] == {"significant": 3}
+        assert summary["resolved"] == 1
+        assert summary["unassigned"] == 2  # resolved risks don't need owners
+        assert summary["overdue"] == 0
 
 
 def test_risk_summary_counts():

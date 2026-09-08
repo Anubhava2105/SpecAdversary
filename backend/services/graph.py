@@ -21,7 +21,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from db.models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
-from services.llm_gateway import completion_message, get_client, stream_completion
+from services.llm_gateway import BudgetExceeded, completion_message, get_client, stream_completion
 
 MAX_LLM_RETRIES = 2
 LLM_TIMEOUT_SECONDS = 30
@@ -48,26 +48,47 @@ def llm_enabled(): return bool(os.getenv("OPENAI_API_KEY"))
 def compute_missing_context(parsed: ParsedSpec, llm_reported: list[str] | None = None) -> list[str]:
     """Deterministically merge the parser's report with empty canonical fields."""
     valid = set(CANONICAL_CONTEXT_FIELDS)
-    reported = [item.strip() for item in (llm_reported or parsed.missing_context) if item and item.strip()]
+    source = parsed.missing_context if llm_reported is None else llm_reported
+    reported = [item.strip() for item in source if item and item.strip()]
     result = [item for item in reported if item in valid]
     for field in CANONICAL_CONTEXT_FIELDS:
         if not str(getattr(parsed, field, "")).strip() and field not in result:
             result.append(field)
     return result
 
-def deterministic_moderation(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Safe no-LLM fallback: remove dismissed/duplicate findings, preserving identity."""
+_SEVERITY_RANK = {"structural": 0, "significant": 1, "minor": 2}
+
+
+def _finding_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+    """Order by severity, tolerating unknown or missing severities.
+
+    Provider output is untrusted: a missing/unknown severity must sort last,
+    not raise KeyError and kill the run.
+    """
+    severity = str(item.get("severity") or "minor")
+    return (_SEVERITY_RANK.get(severity, len(_SEVERITY_RANK)), str(item.get("claim") or ""), str(item.get("critique") or ""))
+
+
+def _finding_identity(item: dict[str, Any]) -> tuple[str, str]:
+    return (str(item.get("claim") or "").strip().lower(), str(item.get("critique") or "").strip().lower())
+
+
+def dedupe_findings(findings: list[dict[str, Any]], *, skip_dismissed: bool = True) -> list[dict[str, Any]]:
+    """Sort by severity and drop duplicate (claim, critique) pairs, preserving identity."""
     seen: set[tuple[str, str]] = set()
-    rank = {"structural": 0, "significant": 1, "minor": 2}
     retained: list[dict[str, Any]] = []
-    for finding in sorted(findings, key=lambda item: rank[item["severity"]]):
-        if finding.get("dismissed"):
+    for finding in sorted(findings, key=_finding_sort_key):
+        if skip_dismissed and finding.get("dismissed"):
             continue
-        key = (finding["claim"].strip().lower(), finding["critique"].strip().lower())
+        key = _finding_identity(finding)
         if key not in seen:
             seen.add(key)
             retained.append(finding)
     return retained
+
+def deterministic_moderation(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Safe no-LLM fallback: remove dismissed/duplicate findings, preserving identity."""
+    return dedupe_findings(findings)
 
 def preserve_moderated_identity(candidate: list[dict[str, Any]], originals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Accept only original IDs and restore immutable audit fields after LLM moderation."""
@@ -85,34 +106,51 @@ def preserve_moderated_identity(candidate: list[dict[str, Any]], originals: list
         retained.append(normalized)
         seen.add(source["id"])
     return retained
-async def parse(client: AsyncOpenAI, instructions, text, schema):
-    """Chat Completions API with JSON mode for OpenRouter compatibility."""
-    last_error = None
-    schema_json = json.dumps(schema.model_json_schema(), indent=2)
+async def _call_with_retries(label: str, failure_message: str, attempt):
+    """Run an async LLM *attempt* with exponential-backoff retries.
+
+    The shared shape behind parse/strict_parse/stream_markdown: try up to
+    MAX_LLM_RETRIES + 1 times, log each failure, sleep between attempts, and
+    raise a single RuntimeError chaining the last failure.
+    """
+    last_error: Exception | None = None
     for retry in range(MAX_LLM_RETRIES + 1):
         try:
-            raw = (await completion_message(
-                client, messages=[
-                    {"role": "system", "content": f"{instructions}\n\nRespond with valid JSON matching this schema:\n{schema_json}"},
-                    {"role": "user", "content": text},
-                ],
-                response_format={"type": "json_object"}, timeout=LLM_TIMEOUT_SECONDS,
-                operation="structured_parse",
-            )).content
-            if raw is None:
-                raise RuntimeError("Model returned no content")
-            try:
-                return schema.model_validate_json(raw)
-            except Exception:
-                if "gemini" in os.environ.get("OPENAI_MODEL", "").lower():
-                    return schema.model_validate_json(raw.replace("```json", "").replace("```", ""))
-                raise
+            return await attempt()
+        except BudgetExceeded:
+            raise  # the run is over budget — retrying only burns more
         except Exception as exc:
-            logger.exception("parse() attempt %d failed: %s", retry + 1, exc)
             last_error = exc
+            logger.exception("%s attempt %d failed: %s", label, retry + 1, exc)
             if retry < MAX_LLM_RETRIES:
                 await asyncio.sleep(0.5 * (2 ** retry))
-    raise RuntimeError(f"Structured LLM call failed after {MAX_LLM_RETRIES} retries") from last_error
+    raise RuntimeError(failure_message) from last_error
+
+async def parse(client: AsyncOpenAI, instructions, text, schema):
+    """Chat Completions API with JSON mode for OpenRouter compatibility."""
+    schema_json = json.dumps(schema.model_json_schema(), indent=2)
+
+    async def attempt():
+        raw = (await completion_message(
+            client, messages=[
+                {"role": "system", "content": f"{instructions}\n\nRespond with valid JSON matching this schema:\n{schema_json}"},
+                {"role": "user", "content": text},
+            ],
+            response_format={"type": "json_object"}, timeout=LLM_TIMEOUT_SECONDS,
+            operation="structured_parse",
+        )).content
+        if raw is None:
+            raise RuntimeError("Model returned no content")
+        try:
+            return schema.model_validate_json(raw)
+        except Exception:
+            if "gemini" in os.environ.get("OPENAI_MODEL", "").lower():
+                return schema.model_validate_json(raw.replace("```json", "").replace("```", ""))
+            raise
+
+    return await _call_with_retries(
+        "parse()", f"Structured LLM call failed after {MAX_LLM_RETRIES} retries", attempt
+    )
 
 async def strict_parse(client, instructions: str, user_input: str, schema: type[BaseModel]) -> BaseModel:
     """OpenAI JSON-schema constrained output, then Pydantic validation."""
@@ -122,56 +160,46 @@ async def strict_parse(client, instructions: str, user_input: str, schema: type[
         "json_schema": {"name": schema.__name__.lower(), "strict": True, "schema": schema.model_json_schema()},
     }
 
-    last_error = None
-    for retry in range(MAX_LLM_RETRIES + 1):
+    async def attempt():
+        raw = (await completion_message(
+            client,
+            messages=[{"role": "system", "content": instructions}, {"role": "user", "content": user_input}],
+            response_format=response_format, timeout=LLM_TIMEOUT_SECONDS, operation="strict_parse",
+        )).content
+        if raw is None:
+            raise RuntimeError("Moderator returned no content")
         try:
-            raw = (await completion_message(
-                client,
-                messages=[{"role": "system", "content": instructions}, {"role": "user", "content": user_input}],
-                response_format=response_format, timeout=LLM_TIMEOUT_SECONDS, operation="strict_parse",
-            )).content
-            if raw is None:
-                raise RuntimeError("Moderator returned no content")
-            try:
-                return schema.model_validate_json(raw)
-            except Exception:
-                if is_gemini:
-                    return schema.model_validate_json(raw.replace("```json", "").replace("```", ""))
-                raise
-        except Exception as exc:
-            last_error = exc
-            logger.exception("strict_parse() attempt %d failed", retry + 1)
-            if retry < MAX_LLM_RETRIES:
-                await asyncio.sleep(0.5 * (2 ** retry))
-    raise RuntimeError("Schema-constrained LLM call failed") from last_error
+            return schema.model_validate_json(raw)
+        except Exception:
+            if is_gemini:
+                return schema.model_validate_json(raw.replace("```json", "").replace("```", ""))
+            raise
+
+    return await _call_with_retries("strict_parse()", "Schema-constrained LLM call failed", attempt)
 
 async def stream_markdown(instructions: str, user_input: str, writer) -> str:
     """Stream tokens via *writer* and return the accumulated full text."""
-    last_error = None
-    for retry in range(MAX_LLM_RETRIES + 1):
-        try:
-            response = await stream_completion(
-                get_client(), messages=[
-                    {"role": "system", "content": instructions},
-                    {"role": "user", "content": user_input},
-                ],
-                timeout=LLM_TIMEOUT_SECONDS, operation="markdown_synthesis",
-            )
-            accumulated = ""
-            async for chunk in response:
-                delta = chunk.choices[0].delta.content if chunk.choices else None
-                if delta:
-                    accumulated += delta
-                    writer({"type": "token", "content": delta})
-            if not accumulated:
-                raise RuntimeError("Model returned no content")
-            return accumulated
-        except Exception as exc:
-            logger.exception("stream_markdown() attempt %d failed: %s", retry + 1, exc)
-            last_error = exc
-            if retry < MAX_LLM_RETRIES:
-                await asyncio.sleep(0.5 * (2 ** retry))
-    raise RuntimeError(f"Markdown LLM call failed after {MAX_LLM_RETRIES} retries") from last_error
+    async def attempt() -> str:
+        response = await stream_completion(
+            get_client(), messages=[
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": user_input},
+            ],
+            timeout=LLM_TIMEOUT_SECONDS, operation="markdown_synthesis",
+        )
+        accumulated = ""
+        async for chunk in response:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                accumulated += delta
+                writer({"type": "token", "content": delta})
+        if not accumulated:
+            raise RuntimeError("Model returned no content")
+        return accumulated
+
+    return await _call_with_retries(
+        "stream_markdown()", f"Markdown LLM call failed after {MAX_LLM_RETRIES} retries", attempt
+    )
 
 async def competitor_completion_message(client: AsyncOpenAI, messages: list[dict[str, Any]], **kwargs: Any):
     """Request a competitor-agent completion, retrying malformed provider responses.
@@ -200,9 +228,15 @@ async def orchestrator(state):
     for section, content in sections.items(): writer({"type":"section_parsed", "section":section, "content":content})
     writer({"type": "gatekeeper", "missing_context": missing_context})
     # Use the critics the user explicitly selected for this session.
+    # Unknown names are dropped (stale client data), but an empty result
+    # falls back to the defaults — an empty fan-out would leave the run
+    # with no critic nodes and no revised spec.
     selected = state.get("selected_critics")
     if selected:
         critics = [c for c in selected if any(c == enum_key.value for enum_key in BRIEFS.keys())]
+        if not critics:
+            logger.warning("No valid critics in %r; falling back to defaults", selected)
+            critics = ["assumption", "competitor", "feasibility"]
     else:
         critics = ["assumption", "competitor", "feasibility"]
         if sections.get("business_model", "").strip():
@@ -337,6 +371,16 @@ async def competitor_simulator(state):
                     writer({"type": "status", "status": f"searching: {query}"})
                     pending.append((tool_call, asyncio.create_task(search_web.ainvoke(args))))
                     tool_calls_used += 1
+                else:
+                    # A hallucinated tool name still needs an answer, or the
+                    # next provider call rejects the dangling tool call.
+                    logger.warning("Ignoring unknown tool call: %s", tool_call.function.name)
+                    messages.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": tool_call.function.name,
+                        "content": "Unknown tool. Continue without calling it.",
+                    })
 
             for tool_call, task in pending:
                 result = await task
@@ -388,7 +432,7 @@ async def moderator(state):
     nothing_to_do = (
         len(deterministic) == len(originals)
         and not any(f.get("dismissed") for f in originals)
-        and len({(f["claim"].strip().lower(), f["critique"].strip().lower()) for f in originals}) == len(originals)
+        and len({_finding_identity(f) for f in originals}) == len(originals)
     )
 
     if llm_enabled() and originals and not nothing_to_do:
@@ -434,8 +478,10 @@ async def re_evaluate(state):
         )
 
         thread_text = ""
-        for msg in target.get("thread", []):
-            thread_text += f"{msg['role'].upper()}:\n{msg['content']}\n\n"
+        for msg in target.get("thread", []) or []:
+            if not isinstance(msg, dict):
+                continue
+            thread_text += f"{str(msg.get('role', 'unknown')).upper()}:\n{msg.get('content', '')}\n\n"
 
         prompt_text = f"Original spec:\n{state.get('raw_spec')}\n\nOriginal finding:\n{json.dumps(target, indent=2)}\n\nConversation:\n{thread_text}"
 
@@ -462,17 +508,21 @@ def fan_out(s):
     if s.get("re_evaluate_finding_id"):
         return [Send("re_evaluate", s)]
     mapping={"assumption":"assumption_hunter","competitor":"competitor_simulator","economics":"economics_stress_tester","feasibility":"feasibility_auditor","security":"security_auditor","compliance":"compliance_auditor","marketing":"marketing_auditor"}
-    return [Send(mapping[x],s) for x in s["relevant_critics"]]
+    sends = []
+    for x in s.get("relevant_critics") or []:
+        node = mapping.get(x)
+        if node is None:
+            logger.warning("Skipping unknown critic in fan-out: %r", x)
+            continue
+        sends.append(Send(node, s))
+    return sends
 async def synthesizer(state):
     writer=get_stream_writer(); writer({"type":"status","status":"synthesizing"})
-    rank={"structural":0,"significant":1,"minor":2}; seen=set(); unique=[]
-    for f in sorted(state.get("moderated_findings", state.get("findings",[])),key=lambda x:rank[x["severity"]]):
-        key=(f["claim"].strip().lower(),f["critique"].strip().lower())
-        if key not in seen: seen.add(key); unique.append(f)
+    unique = dedupe_findings(state.get("moderated_findings", state.get("findings",[])), skip_dismissed=False)
     if llm_enabled():
-        prompt="Original spec:\n"+state["raw_spec"]+"\n\nValidated findings:\n"+"\n".join(f"- [{x['severity']}] {x['critique']} Fix: {x.get('suggested_fix') or 'n/a'}" for x in unique)
+        prompt="Original spec:\n"+state["raw_spec"]+"\n\nValidated findings:\n"+"\n".join(f"- [{x.get('severity', 'significant')}] {x.get('critique', '')} Fix: {x.get('suggested_fix') or 'n/a'}" for x in unique)
         revised=await stream_markdown("Rewrite the product spec as markdown. Address all structural and as many significant findings as reasonably fit. Do not mention critics.", prompt, writer)
-    else: revised=state["raw_spec"]+"\n\n## Validation & Risk Controls\n"+"\n".join(f"- {x['suggested_fix']}" for x in unique)
+    else: revised=state["raw_spec"]+"\n\n## Validation & Risk Controls\n"+"\n".join(f"- {x.get('suggested_fix', '')}" for x in unique)
     return {"findings":unique,"revised_spec":revised}
 def build_graph():
     g=StateGraph(GraphState)

@@ -100,21 +100,21 @@ app.add_middleware(SecurityHeadersMiddleware)
 @app.get("/healthz")
 async def healthz():
     """Liveness + dependency readiness: DB and Redis must answer to serve traffic."""
-    checks: dict[str, str] = {}
-    try:
+    async def probe_db() -> None:
         with Session(engine) as db:
             db.execute(text("SELECT 1"))
-        checks["db"] = "ok"
-    except Exception as exc:
-        logger.warning("Health check: database unreachable", exc_info=True)
-        checks["db"] = f"error: {type(exc).__name__}"
 
-    try:
+    async def probe_redis() -> None:
         await redis_client().ping()
-        checks["redis"] = "ok"
-    except Exception as exc:
-        logger.warning("Health check: redis unreachable", exc_info=True)
-        checks["redis"] = f"error: {type(exc).__name__}"
+
+    checks: dict[str, str] = {}
+    for name, probe in (("db", probe_db), ("redis", probe_redis)):
+        try:
+            await probe()
+            checks[name] = "ok"
+        except Exception as exc:
+            logger.warning("Health check: %s unreachable", name, exc_info=True)
+            checks[name] = f"error: {type(exc).__name__}"
 
     healthy = all(v == "ok" for v in checks.values())
     return JSONResponse(

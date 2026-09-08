@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from db.database import engine
 from db.models import Risk, RiskStatus, SpecSession
+from services.lifecycle import as_utc
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,25 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
-def validate_status_transition(old: str, new: str) -> bool:
-    """Return True if transitioning from *old* → *new* is allowed."""
-    if old == new:
+def _coerce_status(value: str | RiskStatus) -> RiskStatus | None:
+    try:
+        return value if isinstance(value, RiskStatus) else RiskStatus(value)
+    except ValueError:
+        return None
+
+
+def validate_status_transition(old: str | RiskStatus, new: str | RiskStatus) -> bool:
+    """Return True if transitioning from *old* → *new* is allowed.
+
+    Unknown statuses are never legal — including the reflexive case, so
+    ("bogus", "bogus") is False.
+    """
+    old_status, new_status = _coerce_status(old), _coerce_status(new)
+    if old_status is None or new_status is None:
+        return False
+    if old_status == new_status:
         return True
-    allowed_from = _VALID_TRANSITIONS.get(new, set())
-    return old in allowed_from
+    return old_status.value in _VALID_TRANSITIONS.get(new_status.value, set())
 
 
 # ── Upsert from pipeline findings ──────────────────────────────────────────
@@ -106,22 +120,24 @@ def upsert_risks_from_findings(
 # ── Lazy backfill for legacy sessions ──────────────────────────────────────
 
 def backfill_risks_for_session(session_id: UUID) -> list[Risk]:
-    """If a session has JSON findings but zero Risk rows, create them.
+    """Create Risk rows for session findings that lack them.
 
-    Idempotent: checks for existing risks before inserting.
+    Idempotent: findings that already have a Risk row are skipped, so partial
+    backfills complete on re-run instead of being skipped entirely.
     """
     with Session(engine) as db:
         session = db.get(SpecSession, session_id)
         if not session or not session.findings:
             return []
 
-        existing_count = db.exec(
-            select(Risk).where(Risk.session_id == session_id)
-        ).first()
-        if existing_count is not None:
+        existing_ids = set(
+            db.exec(select(Risk.finding_id).where(Risk.session_id == session_id)).all()
+        )
+        missing = [f for f in session.findings if f.get("id") not in existing_ids]
+        if not missing:
             return []  # Already has risks — skip
 
-        return upsert_risks_from_findings(session_id, session.findings)
+        return upsert_risks_from_findings(session_id, missing)
 
 
 # ── Summary aggregation ────────────────────────────────────────────────────
@@ -145,7 +161,7 @@ def get_risk_summary(session_id: UUID) -> dict:
         if r.severity:
             by_severity[r.severity] = by_severity.get(r.severity, 0) + 1
 
-        due = r.due_date.replace(tzinfo=timezone.utc) if r.due_date and r.due_date.tzinfo is None else r.due_date
+        due = as_utc(r.due_date)
         if due and due < now and r.status not in ("resolved", "dismissed"):
             overdue += 1
         if r.owner_id is None and r.status not in ("resolved", "dismissed"):

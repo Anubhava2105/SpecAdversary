@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlalchemy import JSON, Column, DateTime, UniqueConstraint
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
 
@@ -177,7 +177,10 @@ class Risk(SQLModel, table=True):
     due_date: datetime | None = SQLField(default=None, index=True)
     source_run_id: UUID | None = SQLField(default=None, foreign_key="analysisrun.id")
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = SQLField(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc)),
+    )
     resolved_at: datetime | None = None
 
 

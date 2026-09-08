@@ -20,8 +20,8 @@ async def main() -> None:
         run_id = await dequeue_run()
         if run_id is not None:
             await execute_run(run_id)
-            continue
-        # Idle cycle: opportunistically sweep orphaned runs.
+        # The sweep runs on a wall-clock timer on every cycle — not only when
+        # idle — so stuck runs can't accumulate under continuous load.
         now = asyncio.get_running_loop().time()
         if now - last_reap >= REAP_INTERVAL_SECONDS:
             try:
