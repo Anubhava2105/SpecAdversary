@@ -1,63 +1,59 @@
-import gsap from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { DossierSection } from '../components/landing/DossierSection';
+import { ProgrammeSection } from '../components/landing/DossierSection';
 import { HeroSection } from '../components/landing/HeroSection';
-import { WorkflowSection } from '../components/landing/WorkflowSection';
+import { VerdictSection } from '../components/landing/VerdictSection';
+import { ProceedingsSection } from '../components/landing/WorkflowSection';
+import { useReveal } from '../lib/useReveal';
 import '../styles/landing.css';
-import { FileText, GitBranch } from 'lucide-react';
 
-gsap.registerPlugin(ScrollTrigger);
+const REPO_URL = 'https://github.com/Anubhava2105/SpecAdversary';
 
 export function LandingPage() {
-  const headerRef = useRef<HTMLElement>(null);
+  const rootRef = useReveal<HTMLDivElement>();
 
-  useLayoutEffect(() => {
-    const ctx = gsap.context(() => {
-      // Frosted glass transition on scroll
-      ScrollTrigger.create({
-        start: 'top -50',
-        end: 99999,
-        toggleClass: { className: 'scrolled', targets: headerRef.current },
-      });
-    });
-    return () => ctx.revert();
+  useEffect(() => {
+    const onScroll = () => {
+      document.querySelector('.landing-nav')?.classList.toggle('scrolled', window.scrollY > 50);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   return (
-    <div className="landing-page">
-      <header className="landing-nav" ref={headerRef}>
+    <div className="landing-page" ref={rootRef}>
+      <header className="landing-nav">
         <div className="nav-left">
           <Link to="/" className="logo">
             Spec<span className="logo-accent">Adversary</span>
           </Link>
         </div>
-        <div className="nav-right">
-          <a href="#features" className="nav-link">Features</a>
-          <a href="#how-it-works" className="nav-link">How it Works</a>
-          <a href="/docs" className="nav-link">Docs</a>
+        <nav className="nav-right" aria-label="Primary">
+          <a href="#panel" className="nav-link">Panel</a>
+          <a href="#proceedings" className="nav-link">Proceedings</a>
+          <a href="#verdict" className="nav-link">Verdict</a>
           <Link to="/app" className="cta-btn bordered">Launch App</Link>
-        </div>
+        </nav>
       </header>
 
       <main>
         <HeroSection />
-        <DossierSection />
-        <WorkflowSection />
-        
-        <section className="social-proof">
-          <h2>Stop building the wrong thing.</h2>
-          <p>Turn a 2-week review cycle into a 2-minute stress test.</p>
-        </section>
+        <ProgrammeSection />
+        <ProceedingsSection />
+        <VerdictSection />
       </main>
+
+      <div className="sticky-cta">
+        <Link to="/app" className="cta-btn primary">
+          Put your spec on the stand
+        </Link>
+      </div>
 
       <footer className="landing-footer">
         <div className="footer-links">
-          <a href="https://github.com"><GitBranch size={18} /> GitHub</a>
-          <a href="/docs"><FileText size={18} /> Documentation</a>
-          <a href="/privacy">Privacy Policy</a>
-          <a href="/terms">Terms of Service</a>
+          <a href={REPO_URL}>GitHub</a>
+          <span className="no-signup">Hear it from critics before customers do.</span>
         </div>
       </footer>
     </div>

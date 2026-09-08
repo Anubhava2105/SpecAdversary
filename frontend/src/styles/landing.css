@@ -1,15 +1,69 @@
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,700;1,800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400;1,6..72,600&display=swap");
 
-/* ── Base Landing Styles ────────────────────────────────── */
+/* THE RECORD — landing world.
+   Court transcript on black record paper, acid-signal rulings.
+   Three voices: Newsreader (display headings, wordmark), Archivo Narrow
+   (counsel, rulings, labels, actions), JetBrains Mono (transcript lines,
+   numbers, evidence). */
+
 .landing-page {
-  background-color: #0a0a0a;
-  color: #e8e4d9;
-  font-family: "JetBrains Mono", monospace;
+  --record-black: #11120f;
+  --record-panel: #16170f;
+  --record-rule: #34352f;
+  --record-ink: #e8e4d9;
+  --record-dim: #a7a991;
+  --record-faint: #6b6d60;
+  --signal: #e8ff47;
+  --sustained: #ff5d5d;
+  --admitted: #ffba54;
+  --overruled: #85877c;
+  /* Fixed spacing spec. Layout distances (container, gutters, section
+     rhythm, grid gaps) use these tokens. Component internals keep local
+     values. Gutters step down at the tablet and phone breakpoints. */
+  --sp-xs: 8px;
+  --sp-sm: 16px;
+  --sp-md: 32px;
+  --sp-lg: 64px;
+  --sp-xl: 112px;
+  --container: 1400px;
+  --gutter: 48px;
+  /* Motion spec. Expo-out easing everywhere; one entrance, one reveal. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --reveal-duration: 0.45s;
+  background-color: var(--record-black);
+  color: var(--record-ink);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
   min-height: 100vh;
   overflow-x: hidden;
 }
 
-/* ── Navigation ─────────────────────────────────────────── */
+.landing-page h1,
+.landing-page h2 {
+  font-family: "Newsreader", Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+.landing-page h3,
+.record-grotesk {
+  font-family: "Archivo Narrow", "Arial Narrow", sans-serif;
+}
+
+/* ── Step reveals (JS only; no-JS renders final state) ──
+   Transform and opacity only: both run on the GPU, so scrolling stays
+   smooth. No stagger, no per-item delay. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 0.45s ease,
+    transform var(--reveal-duration) var(--ease-out);
+}
+.js .reveal.revealed {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── Header ── */
 .landing-nav {
   position: fixed;
   top: 0;
@@ -17,384 +71,510 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 40px;
+  padding: 20px var(--gutter);
   z-index: 100;
-  transition: all 0.3s ease;
   background: transparent;
+  border-bottom: 1px solid transparent;
 }
-
 .landing-nav.scrolled {
-  background: rgba(10, 10, 10, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid #222;
-  padding: 15px 40px;
+  background: var(--record-black);
+  border-bottom: 1px solid var(--record-rule);
+  padding: 12px var(--gutter);
 }
-
 .nav-left .logo {
-  font-size: 32px;
-  font-family: "Playfair Display", serif;
-  font-weight: 800;
+  font-size: 30px;
+  font-family: "Newsreader", Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   text-decoration: none;
-  color: #e8e4d9;
-  letter-spacing: -0.5px;
+  color: var(--record-ink);
 }
-
 .nav-left .logo-accent {
-  color: #d5ff4d;
+  color: var(--signal);
   font-style: italic;
-  font-weight: 700;
 }
-
 .nav-right {
   display: flex;
   align-items: center;
-  gap: 30px;
+  gap: 28px;
 }
-
 .nav-link {
-  color: #a7a991;
+  color: var(--record-dim);
   text-decoration: none;
-  font-size: 14px;
-  transition: color 0.2s ease;
+  font-size: 13px;
 }
-
 .nav-link:hover {
-  color: #fff;
+  color: var(--record-ink);
 }
 
+/* ── Actions ── */
 .cta-btn {
   text-decoration: none;
-  font-size: 14px;
+  font-family: "Archivo Narrow", sans-serif;
   font-weight: 600;
-  padding: 10px 20px;
-  border-radius: 4px;
-  transition: all 0.2s ease;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 14px;
+  padding: 12px 22px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.cta-btn.bordered {
-  border: 1px solid #d5ff4d;
-  color: #d5ff4d;
+  border: 1px solid var(--signal);
+  color: var(--signal);
   background: transparent;
 }
-
-.cta-btn.bordered:hover {
-  background: rgba(213, 255, 77, 0.1);
+.cta-btn:hover {
+  background: var(--signal);
+  color: var(--record-black);
 }
-
 .cta-btn.primary {
-  background: #d5ff4d;
-  color: #11120f;
-  border: none;
+  background: var(--signal);
+  color: var(--record-black);
+  border: 1px solid var(--signal);
 }
-
 .cta-btn.primary:hover {
-  background: #e3ff7a;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(213, 255, 77, 0.2);
+  background: var(--record-ink);
+  border-color: var(--record-ink);
 }
 
-/* ── Hero Section (Asymmetric) ──────────────────────────── */
-.hero-section {
-  padding: 180px 40px 100px;
-  min-height: 90vh;
-  display: flex;
-  align-items: center;
-}
-
-.hero-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 60px;
-  max-width: 1200px;
-  margin: 0 auto;
-  align-items: end;
-}
-
-.hero-left h1 {
-  font-family: "Playfair Display", serif;
-  font-size: 5rem;
-  line-height: 1.1;
-  margin: 0;
-  letter-spacing: -1px;
-  font-weight: 800;
-  color: #fff;
-}
-
-.hero-word-wrapper {
-  display: inline-block;
-  overflow: hidden;
-}
-
-.hero-word {
-  display: inline-block;
-}
-
-.hero-right {
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
-}
-
-.hero-sub {
-  font-size: 18px;
-  line-height: 1.6;
-  color: #a7a991;
-  margin: 0;
-}
-
-.hero-visual {
-  margin-top: 20px;
-  perspective: 1000px;
-}
-
-.visual-terminal {
-  background: #11120f;
-  border: 1px solid #333;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-  transform: rotateX(5deg) rotateY(-5deg);
-}
-
-.visual-header {
-  background: #1a1a1a;
-  padding: 10px 15px;
-  font-size: 11px;
-  font-family: "JetBrains Mono", monospace;
-  color: #777;
-  border-bottom: 1px solid #333;
-}
-
-.visual-body {
-  padding: 20px;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 13px;
-  color: #a7a991;
-  line-height: 1.8;
-}
-
-.log-success {
-  color: #d5ff4d;
-}
-
-/* ── Dossier Section (Vertical List) ────────────────────── */
-.dossier-section {
-  padding: 100px 40px;
-  max-width: 800px;
+/* ── Examination (first viewport) ── */
+.examination {
+  padding: 160px var(--gutter) var(--sp-xl);
+  max-width: var(--container);
   margin: 0 auto;
 }
-
-.dossier-section h2 {
-  font-family: "Playfair Display", serif;
-  font-size: 3.5rem;
-  letter-spacing: -1px;
-  margin-bottom: 60px;
-  color: #fff;
-  text-align: center;
-}
-
-.dossier-list {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.dossier-item {
+.examination-grid {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 25px;
-  background: #11120f;
-  border: 1px solid #222;
-  border-radius: 8px;
-  padding: 25px;
-  align-items: center;
-  transition: background 0.3s ease;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 72px;
+  align-items: start;
 }
-
-.dossier-icon-wrapper {
-  width: 48px;
-  height: 48px;
-  background: #1a1a1a;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.dossier-content h3 {
-  margin: 0 0 8px 0;
-  font-size: 20px;
-  color: #fff;
-}
-
-.dossier-content p {
-  margin: 0;
-  color: #a7a991;
-  line-height: 1.5;
-}
-
-/* ── Workflow Section (Transcript) ──────────────────────── */
-.workflow-section {
-  padding: 150px 40px;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.workflow-terminal {
-  width: 100%;
-  max-width: 800px;
-  background: #000;
-  border: 1px solid #333;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
-}
-
-.term-header {
-  background: #111;
-  padding: 12px 15px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid #222;
-}
-
-.term-btn {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-.term-btn.red {
-  background: #ff5f56;
-}
-.term-btn.yellow {
-  background: #ffbd2e;
-}
-.term-btn.green {
-  background: #27c93f;
-}
-
-.term-title {
-  margin-left: auto;
-  margin-right: auto;
-  font-family: "JetBrains Mono", monospace;
+.case-no {
   font-size: 12px;
-  color: #666;
+  letter-spacing: 0.14em;
+  color: var(--record-faint);
+  margin: 0 0 18px 0;
 }
-
-.term-body {
-  padding: 30px;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 14px;
-  color: #a7a991;
-  line-height: 2;
-}
-
-.transcript-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 15px;
-  margin-bottom: 15px;
-}
-
-.log-timestamp {
-  color: #555;
-}
-
-.log-step {
-  color: #fff;
-  min-width: 90px;
-}
-
-.log-icon {
-  margin-top: 6px;
-}
-.log-icon.accent {
-  color: #d5ff4d;
-}
-.log-icon.success {
-  color: #27c93f;
-}
-
-/* ── Social Proof & Footer ──────────────────────────────── */
-.social-proof {
-  text-align: center;
-  padding: 150px 40px;
-  background: #11120f;
-  border-top: 1px solid #222;
-}
-
-.social-proof h2 {
-  font-family: "Playfair Display", serif;
+.examination h1 {
   font-size: 4rem;
+  line-height: 1.04;
   margin: 0 0 20px 0;
-  letter-spacing: -1px;
-  color: #fff;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  color: var(--record-ink);
+  text-wrap: balance;
+}
+.examination h1 .struck-word {
+  color: var(--signal);
+  font-style: italic;
+}
+.examination-lede {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--record-dim);
+  margin: 0 0 30px 0;
+  max-width: 46ch;
+}
+.examination-cta-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.no-signup {
+  font-size: 12px;
+  color: var(--record-faint);
 }
 
-.social-proof p {
-  font-size: 20px;
-  color: #a7a991;
+/* Transcript exhibit */
+.transcript {
+  border: 1px solid var(--record-rule);
+  background: var(--record-panel);
   margin: 0;
 }
+.transcript-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--record-rule);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--record-faint);
+}
+.exhibit-tag {
+  border: 1px solid var(--record-faint);
+  color: var(--record-dim);
+  padding: 2px 8px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+.transcript-body {
+  padding: 8px 0;
+}
+.transcript-line {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 12px;
+  padding: 12px var(--sp-sm);
+  font-size: 14px;
+  line-height: 1.65;
+  border-bottom: 1px dotted #26271f;
+}
+.transcript-line:last-child {
+  border-bottom: none;
+}
+.line-no {
+  color: var(--record-faint);
+  text-align: right;
+  user-select: none;
+}
+.counsel {
+  display: block;
+  font-family: "Archivo Narrow", sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--signal);
+  margin-bottom: 2px;
+}
+.counsel.assumption { color: var(--record-ink); }
+.speech {
+  color: var(--record-dim);
+}
+.speech strong {
+  color: var(--record-ink);
+  font-weight: 600;
+}
+.stamp {
+  display: inline-block;
+  font-family: "Archivo Narrow", sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  border: 2px solid currentColor;
+  padding: 1px 8px;
+  margin-left: 10px;
+  transform: rotate(-3deg);
+  vertical-align: middle;
+}
+.stamp.sustained { color: var(--sustained); }
+.stamp.admitted { color: var(--admitted); }
+.stamp.overruled { color: var(--overruled); }
 
-.landing-footer {
-  padding: 40px;
-  text-align: center;
-  border-top: 1px solid #222;
+/* Hero one-shot entrance: lines settle in once, then stay. */
+.js .transcript-line.enter {
+  opacity: 0;
+  transform: translateY(8px);
+  filter: blur(4px);
+  animation: line-in 0.3s var(--ease-out) forwards;
+}
+@keyframes line-in {
+  to { opacity: 1; transform: none; filter: blur(0); }
 }
 
+/* Programme rail */
+.programme {
+  border: 1px solid var(--record-rule);
+  background: var(--record-black);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.programme-head {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--record-rule);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--record-faint);
+}
+.programme-line {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 11px 16px;
+  border-bottom: 1px solid #22241c;
+  color: var(--record-ink);
+  font-family: "Archivo Narrow", sans-serif;
+  list-style: none;
+}
+.programme-line:last-child {
+  border-bottom: none;
+}
+.programme-no {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--record-faint);
+}
+.programme-name {
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--record-ink);
+}
+.programme-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--signal);
+}
+/* Examined acts dim and take a signal edge mark. Names are never struck
+   through: the strike rendered the counsel unreadable, so the edge carries
+   the "heard" state and the name stays legible. */
+.programme-line.examined {
+  color: var(--record-dim);
+  box-shadow: inset 2px 0 0 var(--signal);
+}
+.programme-line.examined .programme-name {
+  color: var(--record-dim);
+}
+
+/* ── Section shell ── */
+.record-section {
+  padding: var(--sp-xl) var(--gutter);
+  max-width: var(--container);
+  margin: 0 auto;
+  border-top: 1px solid var(--record-rule);
+}
+.record-section h2 {
+  font-size: 2.75rem;
+  line-height: 1.05;
+  margin: 0 0 16px 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.section-standfirst {
+  color: var(--record-dim);
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 62ch;
+  margin: 0 0 var(--sp-lg) 0;
+}
+
+/* ── Proceedings ── */
+.proceedings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--record-rule);
+}
+.act {
+  padding: var(--sp-md);
+  background: var(--record-panel);
+}
+.act + .act {
+  border-left: 1px solid var(--record-rule);
+}
+.act-no {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--record-faint);
+  display: block;
+  margin-bottom: 10px;
+}
+.act h3 {
+  font-size: 1.65rem;
+  margin: 0 0 12px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.act p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--record-dim);
+  margin: 0;
+}
+.act p + p {
+  margin-top: 10px;
+}
+
+/* ── Verdict ── */
+.verdict-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--sp-lg);
+  align-items: start;
+}
+.verdict-page {
+  border: 1px solid var(--record-rule);
+  background: var(--record-panel);
+  padding: var(--sp-md);
+  position: relative;
+}
+.verdict-page h3 {
+  font-size: 1.3rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 6px 0;
+}
+.verdict-page .file-line {
+  font-size: 11px;
+  color: var(--record-faint);
+  letter-spacing: 0.1em;
+  margin-bottom: 18px;
+}
+.verdict-page ul {
+  list-style: none;
+  margin: 0 0 18px 0;
+  padding: 0;
+}
+.verdict-page li {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--record-dim);
+  padding: 8px 0;
+  border-bottom: 1px dotted #26271f;
+}
+.verdict-page li b {
+  color: var(--record-ink);
+}
+.verdict-stamp {
+  position: absolute;
+  top: 22px;
+  right: 24px;
+}
+.verdict-note {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--record-dim);
+}
+.verdict-note p {
+  margin: 0 0 16px 0;
+}
+.verdict-note p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Footer ── */
+.landing-footer {
+  padding: var(--sp-md) var(--gutter) var(--sp-xl);
+  border-top: 1px solid var(--record-rule);
+}
 .footer-links {
   display: flex;
-  justify-content: center;
-  gap: 30px;
+  gap: var(--sp-md);
+  max-width: var(--container);
+  margin: 0 auto;
 }
-
 .footer-links a {
-  color: #666;
+  color: var(--record-faint);
   text-decoration: none;
-  font-size: 13px;
+  font-size: 12px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: color 0.2s;
 }
-
 .footer-links a:hover {
-  color: #a7a991;
+  color: var(--record-ink);
 }
 
-/* ── Utilities & Mobile ─────────────────────────────────── */
-.cursor-blink {
-  animation: blink 1s step-end infinite;
-  color: #d5ff4d;
+/* ── Sticky mobile CTA ── */
+.sticky-cta {
+  display: none;
 }
 
-@keyframes blink {
-  50% {
-    opacity: 0;
+/* ── Focus ── */
+.landing-page a:focus-visible,
+.landing-page button:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+
+/* ── Tablet ── */
+@media (max-width: 1024px) {
+  .landing-page {
+    --gutter: var(--sp-md);
   }
-}
-
-@media (max-width: 900px) {
-  .hero-grid {
+  .examination-grid,
+  .verdict-grid {
     grid-template-columns: 1fr;
-    gap: 40px;
   }
-  .hero-left h1 {
-    font-size: 3.5rem;
+  .programme-strip {
+    display: flex;
+    overflow-x: auto;
+    border: 1px solid var(--record-rule);
   }
-  .dossier-item {
+  .programme-strip .programme-line {
+    min-width: 220px;
+    border-bottom: none;
+    border-right: 1px solid #22241c;
+  }
+  .proceedings {
     grid-template-columns: 1fr;
-    text-align: center;
   }
-  .dossier-icon-wrapper {
-    margin: 0 auto;
+  .act + .act {
+    border-left: none;
+    border-top: 1px solid var(--record-rule);
+  }
+}
+
+/* ── Phone ── */
+@media (max-width: 719px) {
+  .landing-page {
+    --gutter: 20px;
+  }
+  .landing-nav {
+    padding: 14px var(--gutter);
+  }
+  .landing-nav.scrolled {
+    padding: 10px var(--gutter);
+  }
+  .nav-right .nav-link {
+    display: none;
+  }
+  .examination {
+    padding: 120px var(--gutter) var(--sp-lg);
+  }
+  .examination h1 {
+    font-size: 2.75rem;
+  }
+  .record-section {
+    padding: var(--sp-lg) var(--gutter);
+  }
+  .record-section h2 {
+    font-size: 2.1rem;
+  }
+  .transcript-line {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .line-no {
+    display: none;
+  }
+  .landing-footer {
+    padding: var(--sp-md) var(--gutter) 110px;
+  }
+  .sticky-cta {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    padding: 12px var(--gutter) calc(12px + env(safe-area-inset-bottom));
+    background: var(--record-black);
+    border-top: 1px solid var(--record-rule);
+  }
+  .sticky-cta .cta-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ── Reduced motion: everything final, no entrance ── */
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .js .transcript-line.enter {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: none;
   }
 }

@@ -1,80 +1,37 @@
-import gsap from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { useLayoutEffect, useRef } from 'react';
+const ACTS = [
+  {
+    no: 'Act I',
+    title: 'Input',
+    body: 'Paste a spec or attach a file. The gatekeeper splits it into sections and picks the critics that fit.',
+  },
+  {
+    no: 'Act II',
+    title: 'Attack',
+    body: 'Each critic reads and files findings as they land. Push back on anything you disagree with and the panel re-examines it.',
+  },
+  {
+    no: 'Act III',
+    title: 'Verdict',
+    body: 'The moderator merges overlaps. You get a revised spec plus a risk list with owners and due dates.',
+  },
+];
 
-gsap.registerPlugin(ScrollTrigger);
-
-import { CheckCircle, Upload, Zap } from 'lucide-react';
-
-export function WorkflowSection() {
-  const containerRef = useRef<HTMLElement>(null);
-
-  useLayoutEffect(() => {
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) return;
-
-    const ctx = gsap.context(() => {
-      const lines = gsap.utils.toArray('.transcript-line');
-      
-      const tl = gsap.timeline({
-        scrollTrigger: {
-          trigger: containerRef.current,
-          start: 'top 30%',
-          end: '+=100%',
-          pin: true,
-          scrub: 1,
-        }
-      });
-
-      lines.forEach((line: any, i) => {
-        tl.fromTo(line, 
-          { opacity: 0, y: 20 },
-          { opacity: 1, y: 0, duration: 1, ease: 'none' }
-        );
-        // Small pause between lines for realism
-        tl.to({}, { duration: 0.5 });
-      });
-
-    }, containerRef);
-
-    return () => ctx.revert();
-  }, []);
-
+/** The proceedings: three acts, no pinned scrub timelines. */
+export function ProceedingsSection() {
   return (
-    <section className="workflow-section" id="how-it-works" ref={containerRef}>
-      <div className="workflow-terminal">
-        <div className="term-header">
-          <span className="term-btn red"></span>
-          <span className="term-btn yellow"></span>
-          <span className="term-btn green"></span>
-          <span className="term-title">system.log</span>
-        </div>
-        <div className="term-body">
-          <div className="transcript-line">
-            <Upload size={16} className="log-icon" />
-            <span className="log-timestamp">[00:00:01]</span>
-            <strong className="log-step">INPUT</strong>
-            <span className="log-text">Received raw product spec/PRD from user.</span>
+    <section className="record-section" id="proceedings">
+      <h2 className="reveal">How a hearing runs.</h2>
+      <p className="section-standfirst reveal">
+        Three acts, same order every time. You watch all of it live.
+      </p>
+      <div className="proceedings">
+        {ACTS.map((act) => (
+          <div key={act.title} className="act reveal">
+            <span className="act-no">{act.no}</span>
+            <h3>{act.title}</h3>
+            <p>{act.body}</p>
           </div>
-          
-          <div className="transcript-line">
-            <Zap size={16} className="log-icon accent" />
-            <span className="log-timestamp">[00:00:02]</span>
-            <strong className="log-step">ATTACK</strong>
-            <span className="log-text">LangGraph multi-agent pipeline initiated. Streaming live critiques over WebSockets.</span>
-          </div>
-          
-          <div className="transcript-line">
-            <CheckCircle size={16} className="log-icon success" />
-            <span className="log-timestamp">[00:00:05]</span>
-            <strong className="log-step">SYNTHESIZE</strong>
-            <span className="log-text">Moderator resolved 14 conflicting critiques. Hardened specification generated.</span>
-          </div>
-          
-          <div className="transcript-line cursor">
-            <span className="cursor-blink">▌</span>
-          </div>
-        </div>
+        ))}
       </div>
     </section>
   );

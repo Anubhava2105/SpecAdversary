@@ -1,68 +1,91 @@
-import gsap from 'gsap';
-import { ChevronRight } from 'lucide-react';
-import { useLayoutEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 
+/**
+ * The examination: the spec on the stand, mid-cross-examination.
+ * Transcript lines stamp in once via CSS, then stay. The copy below
+ * demonstrates the mechanism with real critic names; it makes no
+ * claims about customers, timings, or results.
+ */
+const LINES = [
+  {
+    no: '01',
+    counsel: 'Assumption Hunter',
+    speech: (
+      <>
+        You say users will pay. <strong>What has anyone actually paid for so far?</strong>
+      </>
+    ),
+    stamp: null as { text: string; className: string } | null,
+  },
+  {
+    no: '02',
+    counsel: 'Competitor Simulator',
+    speech: (
+      <>
+        We would ship the single-player version in a weekend <strong>and take your first ten users.</strong>
+      </>
+    ),
+    stamp: { text: 'Admitted', className: 'admitted' },
+  },
+  {
+    no: '03',
+    counsel: 'Economics Tester',
+    speech: (
+      <>
+        One model call per session, <strong>no cost per seat. Show the math.</strong>
+      </>
+    ),
+    stamp: { text: 'Sustained', className: 'sustained' },
+  },
+];
+
 export function HeroSection() {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    // prefers-reduced-motion fallback
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) return;
-
-    const ctx = gsap.context(() => {
-      const tl = gsap.timeline();
-      
-      tl.fromTo('.hero-word', 
-        { y: 30, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.8, stagger: 0.05, ease: 'power3.out' }
-      )
-      .fromTo(['.hero-sub', '.hero-cta', '.hero-visual'], 
-        { y: 20, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.6, stagger: 0.1, ease: 'power2.out' },
-        '-=0.4'
-      );
-    }, containerRef);
-    
-    return () => ctx.revert();
-  }, []);
-
-  const headline = "Send your product thesis into a room full of hostile specialists.";
-  const words = headline.split(' ');
-
   return (
-    <section className="hero-section" ref={containerRef}>
-      <div className="hero-grid">
-        <div className="hero-left">
+    <section className="examination">
+      <div className="examination-grid">
+        <div>
+          <p className="case-no">Case no. 0047 — hearing in progress</p>
           <h1>
-            {words.map((word, i) => (
-              <span key={i} className="hero-word-wrapper">
-                <span className="hero-word">{word}&nbsp;</span>
-              </span>
-            ))}
+            Send your product thesis into a room full of <span className="struck-word">hostile specialists.</span>
           </h1>
-        </div>
-        <div className="hero-right">
-          <p className="hero-sub">
-            An AI-powered stress-testing platform. We route your raw ideas through a specialized panel of adversarial AI agents to identify vulnerabilities and synthesize a bulletproof specification.
+          <p className="examination-lede">
+            SpecAdversary runs your spec past seven critics who try to break it. You get a
+            revised spec and a list of risks to work through. No signup needed to start.
           </p>
-          <div className="hero-cta-wrapper">
-            <Link to="/app" className="cta-btn primary hero-cta">
-              Harden Your Spec Now <ChevronRight size={18} className="cta-icon" />
+          <div className="examination-cta-row">
+            <Link to="/app" className="cta-btn primary">
+              Put your spec on the stand
             </Link>
+            <span className="no-signup">Guest sessions are free.</span>
           </div>
-          
-          <div className="hero-visual">
-            <div className="visual-terminal">
-              <div className="visual-header">Live Signal</div>
-              <div className="visual-body">
-                <span className="cursor-blink">▌</span>
-                <span>Connecting to Critics...</span><br/>
-                <span className="log-success">SUCCESS</span>
-              </div>
+        </div>
+        <div>
+          <figure className="transcript" aria-label="Sample cross-examination transcript">
+            <figcaption className="transcript-head">
+              <span>Record of proceedings</span>
+              <span className="exhibit-tag">Exhibit A</span>
+            </figcaption>
+            <div className="transcript-body">
+              {LINES.map((line, i) => (
+                <div
+                  key={line.no}
+                  className="transcript-line enter"
+                  style={{ animationDelay: `${0.25 + i * 0.35}s` }}
+                >
+                  <span className="line-no" aria-hidden="true">{line.no}</span>
+                  <span>
+                    <span className="counsel">{line.counsel}</span>
+                    <span className="speech">
+                      {line.speech}
+                      {line.stamp && (
+                        <span className={`stamp ${line.stamp.className}`}>{line.stamp.text}</span>
+                      )}
+                    </span>
+                  </span>
+                </div>
+              ))}
             </div>
-          </div>
+          </figure>
         </div>
       </div>
     </section>
