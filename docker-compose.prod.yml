@@ -1,0 +1,175 @@
+# Production stack for a single VM. No bind mounts, no dev servers.
+#
+# Required environment (export on the VM or keep in a root .env file —
+# NEVER commit it):
+#   REDIS_PASSWORD      long random password (Redis + rate-limit storage)
+#   JWT_SECRET          64-char random secret (rotated per deploy is fine;
+#                       rotation logs every user out — expected)
+#   DOMAIN              public frontend host, e.g. specadversary.com
+#   API_DOMAIN          public API host, e.g. api.specadversary.com
+#   FRONTEND_URL        https://${DOMAIN} (must match; boot guard enforces)
+#   CORS_ORIGIN         https://${DOMAIN}
+#   ENV=production      enables the boot guard, HSTS, JSON logs, no /docs
+# Optional:
+#   SENTRY_DSN / GIT_SHA / SENTRY_TRACES_SAMPLE_RATE, WORKER_CONCURRENCY (2),
+#   DB_POOL_SIZE (20) / DB_MAX_OVERFLOW (10), OPENAI_* / TAVILY_* keys,
+#   GOOGLE_CLIENT_ID / GITHUB_CLIENT_ID for OAuth.
+#
+# Deploy order: build, migrate, start.
+#   docker compose -f docker-compose.prod.yml build frontend \
+#     --build-arg VITE_API_URL=https://${API_DOMAIN}
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d migrate  # one-shot, then exits 0
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Scaling rule for beta: run ONE backend replica (the API lifespan reaper
+# would otherwise double-sweep; harmless but noisy), scale with worker
+# replicas: `docker compose -f docker-compose.prod.yml up -d --scale worker=3`.
+# ARQ cron reaping is unique across replicas, so extra workers are safe.
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: >
+      sh -c 'exec redis-server
+      --requirepass "$${REDIS_PASSWORD}"
+      --maxmemory 256mb
+      --maxmemory-policy noeviction'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: specadv
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: specadv
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U specadv -d specadv"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+    restart: unless-stopped
+
+  migrate:
+    build: ./backend
+    command: sh scripts/migrate.sh
+    environment:
+      DATABASE_URL: postgresql://specadv:${POSTGRES_PASSWORD:?}@db:5432/specadv
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  backend:
+    build: ./backend
+    # Gunicorn supervises uvicorn workers; the Dockerfile CMD (plain uvicorn)
+    # stays dev-friendly while prod overrides it here.
+    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000 --timeout 120 --graceful-timeout 30
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql://specadv:${POSTGRES_PASSWORD:?}@db:5432/specadv
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
+      RATELIMIT_STORAGE_URI: redis://:${REDIS_PASSWORD:?}@redis:6379/1
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL must be set to the public origin}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set to the public origin}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      GIT_SHA: ${GIT_SHA:-dev}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status == 200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks: [internal, default]
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: python worker.py
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql://specadv:${POSTGRES_PASSWORD:?}@db:5432/specadv
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      GIT_SHA: ${GIT_SHA:-dev}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # No HTTP surface: a Redis round-trip proves the process is alive and
+    # its event loop isn't blocked.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,redis; r=redis.from_url(os.environ['REDIS_URL']); r.ping()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks: [internal]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: https://${API_DOMAIN:?API_DOMAIN must be set}
+    depends_on: [backend]
+    networks: [internal, default]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set}
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN must be set}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [frontend, backend]
+    networks: [internal, default]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal: {}

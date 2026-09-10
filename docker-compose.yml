@@ -32,6 +32,23 @@ services:
       retries: 5
     networks: [internal]
 
+  # One-shot release step: owns `alembic upgrade head` so concurrent web
+  # replicas never race on migration locks. Backend and worker start only
+  # after it completes successfully.
+  migrate:
+    build: ./backend
+    command: sh scripts/migrate.sh
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://specadv:specadv@db:5432/specadv
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
   backend:
     build: ./backend
     ports: ["8000:8000"]
@@ -48,6 +65,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # /healthz pings Postgres and Redis; the app is only "up" when both answer.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status == 200 else 1)\""]
@@ -65,6 +84,9 @@ services:
     environment:
       DATABASE_URL: postgresql://specadv:specadv@db:5432/specadv
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # Sync DB sessions inside async jobs block the loop: keep in-process
+      # concurrency small, scale with replicas instead (see worker.py).
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
     volumes:
       - ./backend:/app
     depends_on:
@@ -72,6 +94,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # The worker has no HTTP surface; a healthy Redis round-trip means the
     # process is alive and its event loop isn't blocked.
     healthcheck:

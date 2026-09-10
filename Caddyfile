@@ -1,0 +1,11 @@
+# Production edge proxy for the single-VM deploy (see docker-compose.prod.yml).
+# Requires DNS: {$DOMAIN} and {$API_DOMAIN} must point at the VM, with ports
+# 80/443 reachable, for automatic Let's Encrypt issuance. First boot without
+# DNS serves HTTP while Caddy retries issuance in the background.
+{$DOMAIN} {
+	reverse_proxy frontend:80
+}
+
+{$API_DOMAIN} {
+	reverse_proxy backend:8000
+}
