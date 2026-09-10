@@ -13,8 +13,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.logging_config import setup_logging  # noqa: E402
+from core.observability import init_sentry  # noqa: E402
 
 setup_logging()
+init_sentry("api")
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware

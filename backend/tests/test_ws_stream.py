@@ -1,16 +1,14 @@
 """Tests for WebSocket event streaming: snapshot, coalesced replay, ordering."""
-import asyncio
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 import main
-from core import deps
 from db.database import engine
 from db.models import AnalysisRun, RunEvent, RunStatus, SpecSession
 
-deps.dispatch_run = lambda run_id: asyncio.sleep(0)
+# dispatch_run is stubbed per test by conftest's _no_dispatch fixture.
 client = TestClient(main.app)
 
 

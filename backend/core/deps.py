@@ -20,13 +20,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from arq import create_pool  # noqa: E402
+from arq.connections import RedisSettings  # noqa: E402
 from fastapi import HTTPException, Request, status  # noqa: E402
 from slowapi import Limiter  # noqa: E402
 from slowapi.util import get_remote_address  # noqa: E402
 from sqlalchemy import func, text  # noqa: E402
 from sqlmodel import Session, col, select  # noqa: E402
 
-from core.broker import enqueue_run  # noqa: E402
+from core.broker import ARQ_QUEUE_NAME, REDIS_URL  # noqa: E402
 from core.ownership import (  # noqa: E402  (Ownership Rule lives here; re-exported for existing import sites)
     can_access_session as can_access_session,
 )
@@ -176,13 +178,23 @@ def reserve_daily_session(user: User | None = None) -> None:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Daily session limit reached; try again tomorrow")
 
 async def dispatch_run(run_id: UUID) -> None:
-    """Enqueue for a worker; inline execution is only for explicit local development."""
+    """Enqueue an analysis job for ARQ workers; inline execution is only
+    for explicit local development (no worker service running)."""
     if os.getenv("INLINE_WORKER", "false").lower() == "true":
         task = asyncio.create_task(execute_run(run_id))
         inline_tasks.add(task)
         task.add_done_callback(inline_tasks.discard)
         return
-    await enqueue_run(run_id)
+    # A short-lived pool per dispatch: session creation is human-frequency,
+    # so one connection setup per call costs nothing and needs no lifespan
+    # wiring. The function name must match worker.py's registered job.
+    pool = await create_pool(
+        RedisSettings.from_dsn(REDIS_URL), default_queue_name=ARQ_QUEUE_NAME
+    )
+    try:
+        await pool.enqueue_job("run_analysis_job", str(run_id))
+    finally:
+        await pool.close()
 
 async def reaper_loop() -> None:
     """API-side safety net for orphaned runs (worker runs its own sweep)."""

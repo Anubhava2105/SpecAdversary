@@ -1,6 +1,5 @@
 """Tests for per-user daily analysis budgets and proxy-aware rate-limit keys."""
 # Keep the budget test free of infrastructure dependencies
-import asyncio
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -13,7 +12,7 @@ from core.auth import hash_password
 from db.database import engine
 from db.models import SpecSession, User
 
-deps.dispatch_run = lambda run_id: asyncio.sleep(0)
+# dispatch_run is stubbed per test by conftest's _no_dispatch fixture.
 client = TestClient(main.app)
 
 

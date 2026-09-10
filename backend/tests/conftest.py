@@ -70,6 +70,22 @@ def _hermetic_env():
 
 
 @pytest.fixture(autouse=True)
+def _no_dispatch(monkeypatch):
+    """Stub the dispatch seam for every test: no test may touch Redis.
+
+    Module-level `deps.dispatch_run = ...` assignments used to leak across
+    modules (import-time rebinding is permanent and order-dependent).
+    Tests for dispatch itself monkeypatch over this stub.
+    """
+    from core import deps as _deps
+
+    async def _noop(run_id):
+        return None
+
+    monkeypatch.setattr(_deps, "dispatch_run", _noop)
+
+
+@pytest.fixture(autouse=True)
 def _no_rate_limiting():
     """Disable slowapi for every test instead of each module mutating
     ``main.limiter`` post-import."""

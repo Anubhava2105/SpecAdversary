@@ -4,14 +4,11 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from core import deps
 from db.database import engine
 from db.models import Risk, SessionStatus, SpecSession
 from main import app
 
-# Mock dispatch_run to avoid redis connection (slowapi itself is disabled globally in conftest)
-deps.dispatch_run = lambda run_id: __import__("asyncio").sleep(0)
-
+# dispatch_run is stubbed per test by conftest's _no_dispatch fixture.
 client = TestClient(app)
 
 
