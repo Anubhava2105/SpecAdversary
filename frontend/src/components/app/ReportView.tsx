@@ -10,11 +10,13 @@ export function ReportView({
   revised,
   findings,
   streaming,
+  tokenUsage,
 }: {
   raw: string;
   revised: string;
   findings: Finding[];
   streaming: boolean;
+  tokenUsage?: number | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
@@ -99,6 +101,14 @@ export function ReportView({
 
       <div className="revised-header">
         <h2>Revised specification</h2>
+        {typeof tokenUsage === 'number' && (
+          <span
+            className="usage-badge"
+            title="Cumulative LLM tokens charged to this run's budget"
+          >
+            {tokenUsage.toLocaleString()} tokens
+          </span>
+        )}
         <div className="export-actions">
           <button type="button" className={`copy-btn ${copied ? 'copied' : ''}`} onClick={copySpec} title="Copy to clipboard" aria-label="Copy revised spec to clipboard">
             {copied ? (

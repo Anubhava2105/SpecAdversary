@@ -1,4 +1,4 @@
-import { Check, Crosshair, type LucideIcon, Megaphone, Scale, Shield, Swords, TrendingDown, Wrench } from 'lucide-react';
+import { Check, Crosshair, Gavel, type LucideIcon, Megaphone, Scale, Shield, Swords, TrendingDown, Wrench } from 'lucide-react';
 import type { Critic } from '../../types';
 
 export const CRITIC_ICONS: Record<Critic, LucideIcon> = {
@@ -9,6 +9,7 @@ export const CRITIC_ICONS: Record<Critic, LucideIcon> = {
   security: Shield,
   compliance: Scale,
   marketing: Megaphone,
+  dissent: Gavel,
 };
 
 export function CounselCard({

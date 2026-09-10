@@ -68,6 +68,21 @@ describe('applyFrame', () => {
     const s = applyFrame(initialStreamState(), { type: 'heartbeat' });
     expect(s).toEqual(initialStreamState());
   });
+
+  it('captures token usage from the done frame', () => {
+    const s = applyFrame(initialStreamState(), {
+      type: 'done',
+      revised_spec: 'final',
+      token_usage: 1234,
+    });
+    expect(s.tokenUsage).toBe(1234);
+    expect(s.status).toBe('done');
+  });
+
+  it('leaves token usage empty when the done frame carries none', () => {
+    const s = applyFrame(initialStreamState(), { type: 'done', revised_spec: 'final' });
+    expect(s.tokenUsage).toBeNull();
+  });
 });
 
 describe('resetForReplay', () => {
@@ -78,6 +93,7 @@ describe('resetForReplay', () => {
     expect(reset.findings).toEqual([]);
     expect(reset.sections).toEqual([]);
     expect(reset.revised).toBe('');
+    expect(reset.tokenUsage).toBeNull();
     expect(reset.status).toBe(s.status);
   });
 });

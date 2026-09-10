@@ -56,6 +56,7 @@ export default function App() {
     missingContext,
     status,
     revised,
+    tokenUsage,
     connected: wsConnected,
     reset: resetStream,
     hydrate: hydrateStream,
@@ -98,6 +99,7 @@ export default function App() {
         missingContext: x.missing_context || [],
         revised: x.revised_spec || "",
         status: x.status,
+        tokenUsage: x.token_usage ?? null,
       });
       setError("");
       setSelectedCritics(
@@ -258,6 +260,7 @@ export default function App() {
             revised={revised}
             findings={findings}
             streaming={status === "synthesizing"}
+            tokenUsage={tokenUsage}
           />
         ) : (
           riskRegisterPanel

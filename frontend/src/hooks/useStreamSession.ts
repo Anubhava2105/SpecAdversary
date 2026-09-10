@@ -9,6 +9,7 @@ export interface StreamSnapshot {
   missingContext: string[];
   revised: string;
   status: string;
+  tokenUsage: number | null;
 }
 
 interface Options {
@@ -35,6 +36,7 @@ export function useStreamSession({ sessionId, token, authHeaders, onError, onDon
   const [missingContext, setMissingContext] = useState<string[]>([]);
   const [status, setStatus] = useState('waiting');
   const [revised, setRevised] = useState('');
+  const [tokenUsage, setTokenUsage] = useState<number | null>(null);
   const [connected, setConnected] = useState(true);
 
   const engine = useRef<StreamState>(initialStreamState());
@@ -54,6 +56,7 @@ export function useStreamSession({ sessionId, token, authHeaders, onError, onDon
     setMissingContext(state.missingContext);
     setStatus(state.status);
     setRevised(state.revised);
+    setTokenUsage(state.tokenUsage);
   };
 
   /** Submit/new-session path: clear accumulators and move to a fresh status. */
@@ -70,6 +73,7 @@ export function useStreamSession({ sessionId, token, authHeaders, onError, onDon
       sections: snapshot.sections,
       missingContext: snapshot.missingContext,
       revised: snapshot.revised,
+      tokenUsage: snapshot.tokenUsage,
       done: snapshot.status === 'done',
     };
     sync(engine.current);
@@ -153,5 +157,5 @@ export function useStreamSession({ sessionId, token, authHeaders, onError, onDon
     };
   }, [sessionId, token]);
 
-  return { findings, sections, missingContext, status, revised, connected, reset, hydrate };
+  return { findings, sections, missingContext, status, revised, tokenUsage, connected, reset, hydrate };
 }

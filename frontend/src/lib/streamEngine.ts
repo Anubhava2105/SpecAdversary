@@ -9,6 +9,8 @@ export interface StreamState {
   missingContext: string[];
   status: string;
   revised: string;
+  /** Cumulative LLM tokens charged to the run budget (set by the `done` frame). */
+  tokenUsage: number | null;
   error: string;
   connected: boolean;
   /** Once `done` lands, later token/status frames are stale replay tail. */
@@ -22,6 +24,7 @@ export function initialStreamState(status = 'waiting'): StreamState {
     missingContext: [],
     status,
     revised: '',
+    tokenUsage: null,
     error: '',
     connected: true,
     done: false,
@@ -61,6 +64,7 @@ export function applyFrame(state: StreamState, frame: Record<string, unknown>): 
         ...state,
         done: true,
         revised: frame.revised_spec as string,
+        tokenUsage: typeof frame.token_usage === 'number' ? frame.token_usage : null,
         status: 'done',
       };
     case 'error': {
@@ -79,7 +83,7 @@ export function applyFrame(state: StreamState, frame: Record<string, unknown>): 
 
 /** Reset accumulators before a replay rebuilds the view (avoids double-append). */
 export function resetForReplay(state: StreamState): StreamState {
-  return { ...state, findings: [], sections: [], revised: '' };
+  return { ...state, findings: [], sections: [], revised: '', tokenUsage: null };
 }
 
 /** Exponential backoff with ceiling: 1s, 2s, 4s, … capped at maxMs. */

@@ -18,6 +18,7 @@ export const CRITICS: { id: Critic; title: string; job: string }[] = [
   { id: 'security', title: 'Security Auditor', job: 'Looks for auth gaps, leaks, and insecure defaults.' },
   { id: 'compliance', title: 'Compliance Critic', job: 'Flags regulatory exposure.' },
   { id: 'marketing', title: 'Marketing Critic', job: 'Tests whether buyers will care.' },
+  { id: 'dissent', title: 'Dissenting Critic', job: 'Attacks the validated findings before synthesis.' },
 ];
 
 export const CRITIC_TITLES: Record<Critic, string> = Object.fromEntries(
@@ -40,7 +41,7 @@ export const RULINGS: Record<Severity, { stamp: string; className: string }> = {
 };
 
 /**
- * Exhibit letter for a risk's source critic (A–G in panel order). Risks carry
+ * Exhibit letter for a risk's source critic (A–H in panel order). Risks carry
  * no spec-section field, so the filing critic is the stable source key.
  */
 export const exhibitLetter = (criticId: string): string => {

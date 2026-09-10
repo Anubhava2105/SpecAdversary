@@ -405,6 +405,20 @@ button:not(:disabled):active { transform: scale(0.98); }
   opacity: 0.8;
 }
 
+/* Grounded-critic citations under a finding. */
+.finding-sources {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.finding-sources .sources-label {
+  font-weight: 600;
+}
+.finding-sources a {
+  color: var(--accent-acid);
+  text-underline-offset: 2px;
+}
+
 /* ── Hearing preview (findings empty state) ────── */
 .hearing-preview {
   display: flex;
@@ -576,6 +590,18 @@ h2 {
   margin-top: 30px;
 }
 .revised-header h2 { margin: 0 }
+
+/* Per-run LLM spend readout (populated from the stream `done` frame). */
+.usage-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-right: auto;
+  margin-left: 12px;
+  white-space: nowrap;
+}
 
 .export-actions {
   display: flex;

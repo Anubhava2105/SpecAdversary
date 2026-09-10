@@ -112,6 +112,15 @@ function HearingPreview() {
   );
 }
 
+/** Display host for a citation URL; falls back to the raw string. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
 function FindingCard({
   finding,
   onReply,
@@ -150,6 +159,23 @@ function FindingCard({
           <p>{safeText(finding.critique)}</p>
           {finding.suggested_fix && (
             <p className="fix"><CornerDownRight size={12} style={{ display: 'inline', marginRight: 4 }} aria-hidden="true" /> {safeText(finding.suggested_fix)}</p>
+          )}
+          {finding.sources && finding.sources.length > 0 && (
+            <p className="finding-sources">
+              <span className="sources-label">Sources: </span>
+              {finding.sources.slice(0, 3).map((s, i) => (
+                <span key={`${finding.id}-src-${s.url}`}>
+                  {i > 0 && ' · '}
+                  {/^https?:\/\//i.test(s.url) ? (
+                    <a href={s.url} target="_blank" rel="noopener noreferrer">
+                      {safeText(hostOf(s.url))}
+                    </a>
+                  ) : (
+                    safeText(s.url)
+                  )}
+                </span>
+              ))}
+            </p>
           )}
 
           {onViewRisk && finding.id && (
