@@ -177,22 +177,29 @@ def reserve_daily_session(user: User | None = None) -> None:
     if reserved is None:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Daily session limit reached; try again tomorrow")
 
+def inline_enabled() -> bool:
+    """True only for explicit local development without a worker service."""
+    return os.getenv("INLINE_WORKER", "false").lower() == "true"
+
+
 async def dispatch_run(run_id: UUID) -> None:
     """Enqueue an analysis job for ARQ workers; inline execution is only
     for explicit local development (no worker service running)."""
-    if os.getenv("INLINE_WORKER", "false").lower() == "true":
+    if inline_enabled():
         task = asyncio.create_task(execute_run(run_id))
+        setattr(task, "run_id", run_id)
         inline_tasks.add(task)
         task.add_done_callback(inline_tasks.discard)
         return
     # A short-lived pool per dispatch: session creation is human-frequency,
     # so one connection setup per call costs nothing and needs no lifespan
-    # wiring. The function name must match worker.py's registered job.
+    # wiring. The function name must match worker.py's registered job, and
+    # the job id must match the run id so cancel can abort a queued job.
     pool = await create_pool(
         RedisSettings.from_dsn(REDIS_URL), default_queue_name=ARQ_QUEUE_NAME
     )
     try:
-        await pool.enqueue_job("run_analysis_job", str(run_id))
+        await pool.enqueue_job("run_analysis_job", str(run_id), _job_id=str(run_id))
     finally:
         await pool.close()
 

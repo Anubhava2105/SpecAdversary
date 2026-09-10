@@ -85,7 +85,7 @@ def test_dispatch_enqueues_arq_job(monkeypatch):
     monkeypatch.setattr(deps, "create_pool", _create)
     run_id = uuid4()
     asyncio.run(_real_dispatch(run_id))
-    assert pool.enqueued == [("run_analysis_job", (str(run_id),), {})]
+    assert pool.enqueued == [("run_analysis_job", (str(run_id),), {"_job_id": str(run_id)})]
     assert pool.closed is True
 
 

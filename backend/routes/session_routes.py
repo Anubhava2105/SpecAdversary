@@ -10,11 +10,13 @@ from sqlmodel import Session, col, select
 
 from core import deps
 from core.auth import create_websocket_ticket, get_current_user, get_optional_user
+from core.broker import abort_arq_job
 from core.ownership import require_session_access
 from db.database import engine
-from db.models import AnalysisRun, Critic, SessionStatus, SpecSession, User
+from db.models import AnalysisRun, Critic, RunStatus, SessionStatus, SpecSession, User
 from services import lifecycle
 from services import panel as panel_registry
+from services.pipeline_runner import emit_event
 
 router = APIRouter()
 
@@ -159,6 +161,77 @@ async def get_session(request: Request, sid: UUID, user: User | None = Depends(g
         ).all()
         data["token_usage"] = next((u for u in usages if u is not None), None)
     return data
+
+
+@router.post("/sessions/{sid}/cancel")
+@deps.limiter.limit("30/minute")
+async def cancel_session(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
+    """Cancel the session's active analysis run, if any.
+
+    Idempotent by design (double-clicks and retries return the current
+    state): no active run yields `{"status": "noop"}` with 200. Otherwise the
+    worker gets a stop signal first (ARQ abort, or inline-task cancel in
+    local dev), then the run moves to `cancelled` and an in-flight session
+    to `failed` — there is no cancelled session state, and a failed session
+    honestly reports that no deliverable was produced. The worker always wins
+    a race it already won: if it finished between the abort and the
+    transition, the transition is illegal and the current state is returned.
+    """
+    with Session(engine) as db:
+        require_session_access(db, sid, user)
+        run = db.exec(
+            select(AnalysisRun)
+            .where(AnalysisRun.session_id == sid)
+            .order_by(col(AnalysisRun.created_at).desc())
+        ).first()
+        if run is None or run.status in (RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled):
+            return {"status": "noop", "run_id": None}
+        run_id = run.id
+
+    await _stop_worker_run(run_id)
+
+    with Session(engine) as db:
+        run = db.get(AnalysisRun, run_id)
+        if run is None or run.status in (RunStatus.succeeded, RunStatus.failed, RunStatus.cancelled):
+            return {"status": "noop", "run_id": str(run_id)}
+        try:
+            run_events = lifecycle.transition_run(run, RunStatus.cancelled, error_code="cancelled_by_user")
+        except lifecycle.IllegalTransition:
+            # The worker finished between the abort and this transition and
+            # owns the outcome. Report whatever state it left behind.
+            db.rollback()
+            current = db.get(AnalysisRun, run_id)
+            return {"status": current.status.value if current else "noop", "run_id": str(run_id)}
+        session = db.get(SpecSession, run.session_id)
+        session_events: list = []
+        if session is not None and not lifecycle.accepts_client_activity(session.status):
+            session_events = lifecycle.transition_session(session, SessionStatus.failed)
+            db.add(session)
+        db.add(run)
+        db.commit()
+
+    await emit_event(run_id, {"type": "error", "message": "Analysis cancelled.", "code": "cancelled"})
+    for event in run_events + session_events:
+        await emit_event(run_id, event)
+    return {"status": "cancelled", "run_id": str(run_id)}
+
+
+async def _stop_worker_run(run_id: UUID) -> None:
+    """Best-effort stop signal to whichever worker owns the run.
+
+    Local dev runs analyses as inline asyncio tasks; everywhere else they
+    are ARQ jobs addressable by run id. Either path may legitimately miss
+    (already finished, no Redis) — the DB transition in the caller is what
+    actually cancels.
+    """
+    if deps.inline_enabled():
+        for task in list(deps.inline_tasks):
+            if getattr(task, "run_id", None) == run_id and not task.done():
+                # Thread-safe: the route may run on a different loop than
+                # the task (and always does under TestClient).
+                task.get_loop().call_soon_threadsafe(task.cancel)
+        return
+    await abort_arq_job(str(run_id))
 
 
 @router.post("/sessions/{sid}/stream-ticket")
