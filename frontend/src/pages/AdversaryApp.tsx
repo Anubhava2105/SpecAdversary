@@ -184,6 +184,34 @@ export default function App() {
 
   const showReport = status === "synthesizing" || !!revised;
   const showRiskRegister = status === "done" && !!id;
+  const [cancelling, setCancelling] = useState(false);
+  const cancellable =
+    !!id && !["waiting", "done", "failed"].includes(status);
+
+  const cancelAnalysis = async () => {
+    if (!id || !cancellable) return;
+    setCancelling(true);
+    try {
+      const r = await apiFetch(
+        `${API}/sessions/${id}/cancel`,
+        { method: "POST", headers: { "Content-Type": "application/json" } },
+        authHeaders,
+      );
+      if (!r.ok) {
+        setError(await errorDetail(r, "Cancel failed"));
+        setCancelling(false);
+      }
+      // On success the stream delivers the terminal error frame, which
+      // flips status and clears `cancelling` through the effect below.
+    } catch (err: unknown) {
+      setError(`Network error: ${err instanceof Error ? err.message : 'request failed'}`);
+      setCancelling(false);
+    }
+  };
+
+  useEffect(() => {
+    if (["waiting", "done", "failed"].includes(status)) setCancelling(false);
+  }, [status]);
 
   const riskRegisterPanel = showRiskRegister ? (
     <RiskRegister
@@ -207,6 +235,8 @@ export default function App() {
         setReportTab("risks");
         setTargetRiskId(findingId);
       }}
+      onCancel={cancellable ? cancelAnalysis : undefined}
+      cancelling={cancelling}
     />
   );
 

@@ -211,6 +211,31 @@ button:not(:disabled):active { transform: scale(0.98); }
   text-transform: uppercase;
   color: var(--accent-acid);
   font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cancel-run-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.cancel-run-btn:hover:not(:disabled) {
+  border-color: var(--accent-acid);
+  color: var(--accent-acid);
+}
+
+.cancel-run-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .dot {

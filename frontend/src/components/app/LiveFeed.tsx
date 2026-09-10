@@ -12,6 +12,8 @@ export function LiveFeed({
   connected,
   onReply,
   onViewRisk,
+  onCancel,
+  cancelling,
 }: {
   findings: Finding[];
   status: string;
@@ -20,6 +22,8 @@ export function LiveFeed({
   connected: boolean;
   onReply?: (findingId: string, reply: string) => void;
   onViewRisk?: (findingId: string) => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   return (
     <section className="feed" aria-label="Live findings">
@@ -35,6 +39,17 @@ export function LiveFeed({
       <div className="status" role="status">
         <span className={status === 'done' ? 'dot done' : 'dot'} aria-hidden="true" />
         {safeText(status || 'waiting')}
+        {onCancel && (
+          <button
+            type="button"
+            className="cancel-run-btn"
+            onClick={onCancel}
+            disabled={!!cancelling}
+            aria-label="Cancel running analysis"
+          >
+            {cancelling ? 'Cancelling…' : 'Cancel run'}
+          </button>
+        )}
       </div>
       {missingContext.length > 0 && (
         <aside className="gatekeeper-warning" role="status">
