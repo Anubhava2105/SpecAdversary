@@ -13,6 +13,7 @@ from sqlmodel import Session, col, select
 
 from core import deps
 from core.auth import get_optional_user
+from core.ownership import require_risk_access, require_session_access
 from db.database import engine
 from db.models import (
     AnalysisRun,
@@ -138,7 +139,7 @@ async def list_risks(
     user: User | None = Depends(get_optional_user),
 ):
     with Session(engine) as db:
-        deps.require_session_access(db, sid, user)
+        require_session_access(db, sid, user)
 
         # Legacy sessions are migrated once by scripts/backfill_risks.py; this
         # endpoint no longer pays for a backfill probe on every request.
@@ -185,7 +186,7 @@ async def list_risks(
 @deps.limiter.limit("30/minute")
 async def risk_summary(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        deps.require_session_access(db, sid, user)
+        require_session_access(db, sid, user)
         summary = get_risk_summary(sid)
 
     return RiskSummaryResponse(**summary)
@@ -195,7 +196,7 @@ async def risk_summary(request: Request, sid: UUID, user: User | None = Depends(
 @deps.limiter.limit("30/minute")
 async def get_risk_detail(request: Request, rid: UUID, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        risk, _session_row = deps.require_risk_access(db, rid, user)
+        risk, _session_row = require_risk_access(db, rid, user)
 
         comments_rows = db.exec(
             select(RiskComment).where(RiskComment.risk_id == rid).order_by(col(RiskComment.created_at))
@@ -226,7 +227,7 @@ async def get_risk_detail(request: Request, rid: UUID, user: User | None = Depen
 @deps.limiter.limit("30/minute")
 async def patch_risk(request: Request, rid: UUID, payload: RiskPatchPayload, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        risk, _session_row = deps.require_risk_access(db, rid, user)
+        risk, _session_row = require_risk_access(db, rid, user)
 
         # Status transition
         if payload.status is not None:
@@ -292,7 +293,7 @@ async def patch_risk(request: Request, rid: UUID, payload: RiskPatchPayload, use
 @deps.limiter.limit("30/minute")
 async def add_risk_comment(request: Request, rid: UUID, payload: RiskCommentPayload, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        deps.require_risk_access(db, rid, user)
+        require_risk_access(db, rid, user)
 
         comment = RiskComment(
             risk_id=rid,
@@ -318,7 +319,7 @@ async def add_risk_comment(request: Request, rid: UUID, payload: RiskCommentPayl
 @deps.limiter.limit("5/minute")
 async def re_evaluate_risk(request: Request, rid: UUID, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        risk, session_row = deps.require_risk_access(db, rid, user)
+        risk, session_row = require_risk_access(db, rid, user)
         if not lifecycle.accepts_client_activity(session_row.status):
             raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 

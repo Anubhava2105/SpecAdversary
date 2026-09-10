@@ -55,3 +55,43 @@ def test_production_rejects_memory_rate_limit_storage(monkeypatch):
     with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
         main.validate_production_config()
 
+
+def test_production_rejects_dev_no_limits(monkeypatch):
+    monkeypatch.setattr(deps, "IS_PRODUCTION", True)
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("FRONTEND_URL", "https://specadversary.com")
+    monkeypatch.setenv("RATELIMIT_STORAGE_URI", "redis://redis:6379/0")
+    monkeypatch.setenv("DEV_NO_LIMITS", "true")
+    with pytest.raises(RuntimeError, match="DEV_NO_LIMITS"):
+        main.validate_production_config()
+
+
+def test_limits_disabled_only_outside_production(monkeypatch):
+    monkeypatch.setattr(deps, "IS_PRODUCTION", False)
+    monkeypatch.setenv("DEV_NO_LIMITS", "true")
+    assert deps.limits_disabled() is True
+    monkeypatch.setenv("DEV_NO_LIMITS", "false")
+    assert deps.limits_disabled() is False
+    monkeypatch.setattr(deps, "IS_PRODUCTION", True)
+    monkeypatch.setenv("DEV_NO_LIMITS", "true")
+    assert deps.limits_disabled() is False
+
+
+def test_reserve_daily_session_skipped_when_limits_disabled(monkeypatch):
+    monkeypatch.setattr(deps, "IS_PRODUCTION", False)
+    monkeypatch.setenv("DEV_NO_LIMITS", "true")
+    monkeypatch.setattr(deps, "PER_USER_DAILY_LIMIT", 0)
+    main.reserve_daily_session(None)  # must not raise despite a zero budget
+
+
+def test_hermetic_env_scrubs_leaked_dev_flags():
+    """Regression: a developer's backend/.env must not leak into the suite.
+
+    conftest scrubs DEV_NO_LIMITS / INLINE_WORKER per test (load_dotenv
+    pulls them in at app import). If this fails, budget tests will invert.
+    """
+    import os
+
+    assert os.getenv("DEV_NO_LIMITS") != "true"
+    assert os.getenv("INLINE_WORKER") != "true"
+

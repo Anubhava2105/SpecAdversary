@@ -86,6 +86,10 @@ async def lifespan(app):
 
 app=FastAPI(title="Spec Adversary",lifespan=lifespan, docs_url=None if os.environ.get("ENV") == "production" else "/docs")
 app.state.limiter = limiter
+if deps.limits_disabled():
+    # Local development with DEV_NO_LIMITS=true: exercise the platform freely
+    # in guest and signed-in sessions without rate-limit friction.
+    limiter.enabled = False
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 app.add_middleware(
     CORSMiddleware,

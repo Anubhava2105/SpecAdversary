@@ -132,3 +132,50 @@ def test_empty_stream_charges_nothing():
 
     asyncio.run(drain())
     assert end_token_budget() == 0  # failed/empty streams cost nothing
+
+
+# ── Per-run model tiering ─────────────────────────────────────────────
+def test_guest_tier_routes_everything_to_guest_model():
+    assert model_for("structured_parse", "guest") == llm_gateway.MODEL_GUEST
+    assert model_for("markdown_synthesis", "guest") == llm_gateway.MODEL_GUEST
+
+
+def test_paid_tier_keeps_parse_cheap_and_critique_strong():
+    assert model_for("structured_parse", "paid") == llm_gateway.MODEL_FAST
+    assert model_for("markdown_synthesis", "paid") == llm_gateway.MODEL_PAID
+
+
+def test_unknown_tier_falls_back_to_standard():
+    assert model_for("markdown_synthesis", "platinum") == llm_gateway.MODEL_MAIN
+    assert model_for("structured_parse", "platinum") == llm_gateway.MODEL_FAST
+
+
+def test_run_context_tier_applies_without_explicit_argument():
+    llm_gateway.set_run_tier("guest")
+    try:
+        assert model_for("markdown_synthesis") == llm_gateway.MODEL_GUEST
+    finally:
+        llm_gateway.set_run_tier(None)
+    assert model_for("markdown_synthesis") == llm_gateway.MODEL_MAIN
+
+
+def test_resolve_run_tier_maps_guests_to_guest():
+    assert llm_gateway.resolve_run_tier(True) == "guest"
+    assert llm_gateway.resolve_run_tier(False) == "standard"
+
+
+def test_tier_kwarg_reaches_provider_call():
+    seen = {}
+
+    async def create(**kwargs):
+        seen["model"] = kwargs["model"]
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+        )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    asyncio.run(completion_message(
+        client, messages=[], timeout=5, operation="markdown_synthesis", tier="guest",
+    ))
+    assert seen["model"] == llm_gateway.MODEL_GUEST

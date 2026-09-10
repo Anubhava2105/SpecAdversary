@@ -6,25 +6,26 @@ import json
 import logging
 import operator
 import os
+from typing import Annotated, Any, TypedDict
 from uuid import uuid4
 
 from langchain_core.tools import tool
-from tavily import AsyncTavilyClient
-
-logger = logging.getLogger(__name__)
-from typing import Annotated, Any, TypedDict
-
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 from openai import AsyncOpenAI
 from pydantic import BaseModel
+from tavily import AsyncTavilyClient
 
 from db.models import Critic, Finding, FindingsResponse, ModeratorResponse, ParsedSpec, Severity
+from services import panel as panel_registry
 from services.llm_gateway import BudgetExceeded, completion_message, get_client, stream_completion
 
-MAX_LLM_RETRIES = 2
-LLM_TIMEOUT_SECONDS = 30
+logger = logging.getLogger(__name__)
+
+MAX_LLM_RETRIES = 4
+LLM_TIMEOUT_SECONDS = 60
+LLM_SEMAPHORE = asyncio.Semaphore(2)
 TOOL_TIMEOUT_SECONDS = 12
 # Two rounds of grounded searching: a third rarely changes the findings but
 # adds two full serial LLM round-trips to the pipeline's critical path.
@@ -123,7 +124,17 @@ async def _call_with_retries(label: str, failure_message: str, attempt):
             last_error = exc
             logger.exception("%s attempt %d failed: %s", label, retry + 1, exc)
             if retry < MAX_LLM_RETRIES:
-                await asyncio.sleep(0.5 * (2 ** retry))
+                err_str = (str(exc) + " " + type(exc).__name__).lower()
+                if "429" in err_str or "resource_exhausted" in err_str or "ratelimit" in err_str or "quota" in err_str:
+                    backoff = 14.0 * (retry + 1)
+                    logger.warning("Rate limit / quota error in %s. Backing off for %.1fs (retry %d/%d)", label, backoff, retry + 1, MAX_LLM_RETRIES)
+                    await asyncio.sleep(backoff)
+                elif "503" in err_str or "unavailable" in err_str or "timeouterror" in err_str:
+                    backoff = 4.0 * (retry + 1)
+                    logger.warning("Service / timeout issue in %s. Backing off for %.1fs (retry %d/%d)", label, backoff, retry + 1, MAX_LLM_RETRIES)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(0.5 * (2 ** retry))
     raise RuntimeError(failure_message) from last_error
 
 async def parse(client: AsyncOpenAI, instructions, text, schema):
@@ -148,9 +159,10 @@ async def parse(client: AsyncOpenAI, instructions, text, schema):
                 return schema.model_validate_json(raw.replace("```json", "").replace("```", ""))
             raise
 
-    return await _call_with_retries(
-        "parse()", f"Structured LLM call failed after {MAX_LLM_RETRIES} retries", attempt
-    )
+    async with LLM_SEMAPHORE:
+        return await _call_with_retries(
+            "parse()", f"Structured LLM call failed after {MAX_LLM_RETRIES} retries", attempt
+        )
 
 async def strict_parse(client, instructions: str, user_input: str, schema: type[BaseModel]) -> BaseModel:
     """OpenAI JSON-schema constrained output, then Pydantic validation."""
@@ -175,7 +187,8 @@ async def strict_parse(client, instructions: str, user_input: str, schema: type[
                 return schema.model_validate_json(raw.replace("```json", "").replace("```", ""))
             raise
 
-    return await _call_with_retries("strict_parse()", "Schema-constrained LLM call failed", attempt)
+    async with LLM_SEMAPHORE:
+        return await _call_with_retries("strict_parse()", "Schema-constrained LLM call failed", attempt)
 
 async def stream_markdown(instructions: str, user_input: str, writer) -> str:
     """Stream tokens via *writer* and return the accumulated full text."""
@@ -197,9 +210,10 @@ async def stream_markdown(instructions: str, user_input: str, writer) -> str:
             raise RuntimeError("Model returned no content")
         return accumulated
 
-    return await _call_with_retries(
-        "stream_markdown()", f"Markdown LLM call failed after {MAX_LLM_RETRIES} retries", attempt
-    )
+    async with LLM_SEMAPHORE:
+        return await _call_with_retries(
+            "stream_markdown()", f"Markdown LLM call failed after {MAX_LLM_RETRIES} retries", attempt
+        )
 
 async def competitor_completion_message(client: AsyncOpenAI, messages: list[dict[str, Any]], **kwargs: Any):
     """Request a competitor-agent completion, retrying malformed provider responses.
@@ -208,10 +222,11 @@ async def competitor_completion_message(client: AsyncOpenAI, messages: list[dict
     ``choices`` set to ``None``. Treat that as a transient failure rather than
     allowing it to terminate the LangGraph run while indexing the response.
     """
-    return await completion_message(
-        client, messages=messages, timeout=LLM_TIMEOUT_SECONDS,
-        operation="competitor_tool_loop", retries=MAX_LLM_RETRIES, **kwargs,
-    )
+    async with LLM_SEMAPHORE:
+        return await completion_message(
+            client, messages=messages, timeout=LLM_TIMEOUT_SECONDS,
+            operation="competitor_tool_loop", retries=MAX_LLM_RETRIES, **kwargs,
+        )
 
 async def orchestrator(state):
     if state.get("re_evaluate_finding_id"):
@@ -230,15 +245,16 @@ async def orchestrator(state):
     # Use the critics the user explicitly selected for this session.
     # Unknown names are dropped (stale client data), but an empty result
     # falls back to the defaults — an empty fan-out would leave the run
-    # with no critic nodes and no revised spec.
+    # with no critic nodes and no revised spec. The roster lives in the
+    # panel registry; this stays a fallback policy, not a roster copy.
     selected = state.get("selected_critics")
     if selected:
-        critics = [c for c in selected if any(c == enum_key.value for enum_key in BRIEFS.keys())]
+        critics = panel_registry.filter_known(list(selected))
         if not critics:
             logger.warning("No valid critics in %r; falling back to defaults", selected)
-            critics = ["assumption", "competitor", "feasibility"]
+            critics = panel_registry.default_critics()[:3]
     else:
-        critics = ["assumption", "competitor", "feasibility"]
+        critics = panel_registry.default_critics()[:3]
         if sections.get("business_model", "").strip():
             critics.append("economics")
     writer({"type":"status", "status":"critiquing"})
@@ -289,7 +305,7 @@ async def critic(state, kind):
         )
         context_note = ", ".join(state.get("missing_context", [])) or "none"
         user_context = "\n\n".join(f"## {k}\n{v}" for k,v in sections.items()) + f"\n\nKnown missing context: {context_note}"
-        result = await parse(get_client(), BRIEFS[kind] + f" {count_rule} Set critic to {kind.value}. Do not invent missing facts.", user_context, FindingsResponse)
+        result = await parse(get_client(), panel_registry.brief_for(kind) + f" {count_rule} Set critic to {kind.value}. Do not invent missing facts.", user_context, FindingsResponse)
         rows = [x.model_copy(update={"critic":kind, "id": str(uuid4())}).model_dump(mode="json") for x in result.findings]
     else:
         claim = (sections.get("core_solution") or sections.get("problem_statement") or "The proposal")[:180]
@@ -324,7 +340,7 @@ async def competitor_simulator(state):
     client = get_client()
     spec_text = "\n\n".join(f"## {k}\n{v}" for k,v in sections.items())
     system_prompt = (
-        BRIEFS[Critic.competitor] +
+        panel_registry.brief_for(Critic.competitor) +
         " Return between 2 and 5 findings. Set critic to 'competitor'. Do not invent missing facts. "
         "You have access to a web search tool. Use it to find actual real-world competitors for the proposed product."
     )

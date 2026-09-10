@@ -17,7 +17,14 @@ from db.models import AnalysisRun, RunEvent, RunStatus, SessionStatus, SpecSessi
 from services import lifecycle
 from services.graph import spec_graph
 from services.lifecycle import IllegalTransition, as_utc
-from services.llm_gateway import RUN_TOKEN_BUDGET, BudgetExceeded, begin_token_budget, end_token_budget
+from services.llm_gateway import (
+    RUN_TOKEN_BUDGET,
+    BudgetExceeded,
+    begin_token_budget,
+    end_token_budget,
+    resolve_run_tier,
+    set_run_tier,
+)
 from services.risk_service import upsert_risks_from_findings
 
 logger = logging.getLogger(__name__)
@@ -205,6 +212,14 @@ async def execute_run(run_id: UUID) -> None:
 
     await emit_event(run_id, {"type": "status", "status": SessionStatus.parsing.value})
     final: dict = {}
+    # Thread the model tier through the run context: the gateway resolves
+    # per-call models from here, so guest-versus-paid routing lives in one
+    # place instead of env archaeology at each call site.
+    is_guest_session: bool | None = None
+    with Session(engine) as db:
+        probe = db.get(SpecSession, session_id)
+        is_guest_session = (probe is None or probe.user_id is None)
+    set_run_tier(resolve_run_tier(bool(is_guest_session)))
     begin_token_budget()
     try:
         initial_state: dict[str, Any] = {"raw_spec": raw_spec, "findings": []}
@@ -280,6 +295,7 @@ async def execute_run(run_id: UUID) -> None:
         await _fail_run(run_id, "pipeline_failed", "Analysis failed. Please try again.")
     finally:
         used = end_token_budget()
+        set_run_tier(None)
         if used:
             logger.info("run=%s token_usage=%d budget_limit=%d", run_id, used, RUN_TOKEN_BUDGET)
 

@@ -14,6 +14,7 @@ from sqlmodel import Session, col, select
 from core import deps
 from core.auth import decode_token
 from core.broker import subscribe_run
+from core.ownership import can_access_session
 from db.database import engine
 from db.models import AnalysisRun, RunEvent, SpecSession, User
 from routes.session_routes import session_snapshot_events
@@ -56,7 +57,7 @@ async def stream_session(ws: WebSocket, sid: UUID):
 
     with Session(engine) as db:
         row = db.get(SpecSession, sid)
-    if row and not deps.can_access_session(row, ws_user):
+    if row and not can_access_session(row, ws_user):
         logger.warning("WS rejected: access denied for session %s", sid)
         await ws.accept()
         await ws.close(code=status.WS_1008_POLICY_VIOLATION)

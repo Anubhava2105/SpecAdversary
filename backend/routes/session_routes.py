@@ -10,18 +10,22 @@ from sqlmodel import Session, col, select
 
 from core import deps
 from core.auth import create_websocket_ticket, get_current_user, get_optional_user
+from core.ownership import require_session_access
 from db.database import engine
 from db.models import AnalysisRun, Critic, SessionStatus, SpecSession, User
 from services import lifecycle
+from services import panel as panel_registry
 
 router = APIRouter()
 
 # ── Existing logic (preserved) ─────────────────────────────────────────────
 class CreateSession(BaseModel):
     raw_spec: str = Field(min_length=1, max_length=10_000)
+    # Defaults derive from the panel registry — adding a critic there
+    # changes the default fan-out without touching this schema.
     selected_critics: list[Critic] = Field(
         min_length=1,
-        default_factory=lambda: [Critic.assumption, Critic.competitor, Critic.economics, Critic.feasibility],
+        default_factory=lambda: [Critic(c) for c in panel_registry.DEFAULT_CRITICS],
     )
 
 class ReplyPayload(BaseModel):
@@ -58,7 +62,8 @@ async def create_session(request: Request, payload: CreateSession, user: User | 
         # Authoritative per-user enforcement inside the insert transaction:
         # the pre-check in reserve_daily_session is a fast fail, this closes
         # the concurrent-insert race (both checks share one helper).
-        if user is not None and deps.per_user_sessions_today(db, user.id) > deps.PER_USER_DAILY_LIMIT:
+        # Skipped when local development limits are disabled.
+        if not deps.limits_disabled() and user is not None and deps.per_user_sessions_today(db, user.id) > deps.PER_USER_DAILY_LIMIT:
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -84,7 +89,7 @@ async def create_session(request: Request, payload: CreateSession, user: User | 
 async def reply_to_finding(request: Request, sid: UUID, fid: str, payload: ReplyPayload, user: User | None = Depends(get_optional_user)):
     from sqlalchemy.orm.attributes import flag_modified
     with Session(engine) as db:
-        row = deps.require_session_access(db, sid, user)
+        row = require_session_access(db, sid, user)
         if not lifecycle.accepts_client_activity(row.status):
             raise HTTPException(status.HTTP_409_CONFLICT, "Analysis is still in progress for this session")
 
@@ -141,7 +146,7 @@ async def list_sessions(
 @deps.limiter.limit("30/minute")
 async def get_session(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
-        row = deps.require_session_access(db, sid, user)
+        row = require_session_access(db, sid, user)
     return row
 
 
@@ -149,5 +154,5 @@ async def get_session(request: Request, sid: UUID, user: User | None = Depends(g
 @deps.limiter.limit("30/minute")
 async def create_stream_ticket(request: Request, sid: UUID, user: User = Depends(get_current_user)):
     with Session(engine) as db:
-        deps.require_session_access(db, sid, user)
+        require_session_access(db, sid, user)
     return {"ticket": create_websocket_ticket(user.id)}

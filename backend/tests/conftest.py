@@ -6,6 +6,19 @@ first import — leaving them pointed at a different DB than the fixtures.
 conftest.py is imported by pytest before any test module, so installing
 the engine here keeps every consumer on the same connection.
 """
+import os
+
+# Hermetic suite: app modules call load_dotenv() at import, so a developer's
+# backend/.env leaks into the test process. DEV_NO_LIMITS=true disables rate
+# limiting and daily budgets, which silently inverts budget assertions
+# (reserve_daily_session early-returns); INLINE_WORKER=true would execute
+# real pipelines inline during tests. Scrub both before any app import; the
+# per-test fixture below re-scrubs them for every test. Tests that need a
+# flag set it explicitly via monkeypatch (auto-undone after the test).
+for _leaked in ("DEV_NO_LIMITS", "INLINE_WORKER"):
+    os.environ.pop(_leaked, None)
+del _leaked
+
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, create_engine
@@ -37,6 +50,23 @@ import pytest  # noqa: E402
 def db_engine():
     """The single shared test engine installed above."""
     return engine
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_env():
+    """Re-scrub the local-dev escape hatch for every test.
+
+    Regression guard: without this, DEV_NO_LIMITS=true leaking from a
+    developer's backend/.env disables budget enforcement mid-suite and
+    turns limit tests red (or worse, silently green for the wrong reason).
+    """
+    import os
+
+    for _leaked in ("DEV_NO_LIMITS", "INLINE_WORKER"):
+        os.environ.pop(_leaked, None)
+    yield
+    for _leaked in ("DEV_NO_LIMITS", "INLINE_WORKER"):
+        os.environ.pop(_leaked, None)
 
 
 @pytest.fixture(autouse=True)

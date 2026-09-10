@@ -2,8 +2,10 @@
 
 Owns the configuration constants, the rate limiter, audit logging, the
 prompt-injection and daily-budget guards, and run dispatch — the globals
-every router shares. Tests patch ``deps.dispatch_run`` and flip
-``deps.limiter.enabled`` here instead of reaching into ``main``.
+every router shares. Session access control lives in ``core.ownership``
+(the Ownership Rule's own module); the names are re-exported here so
+existing import sites keep working. Tests patch ``deps.dispatch_run`` and
+flip ``deps.limiter.enabled`` here instead of reaching into ``main``.
 """
 from __future__ import annotations
 
@@ -25,8 +27,17 @@ from sqlalchemy import func, text  # noqa: E402
 from sqlmodel import Session, col, select  # noqa: E402
 
 from core.broker import enqueue_run  # noqa: E402
+from core.ownership import (  # noqa: E402  (Ownership Rule lives here; re-exported for existing import sites)
+    can_access_session as can_access_session,
+)
+from core.ownership import (
+    require_risk_access as require_risk_access,
+)
+from core.ownership import (
+    require_session_access as require_session_access,
+)
 from db.database import engine  # noqa: E402
-from db.models import Risk, SpecSession, User  # noqa: E402
+from db.models import SpecSession, User  # noqa: E402
 from services.pipeline_runner import execute_run  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -48,6 +59,8 @@ def validate_production_config() -> None:
         problems.append("FRONTEND_URL must be set to the production public origin")
     if os.getenv("RATELIMIT_STORAGE_URI", "memory://") == "memory://":
         problems.append("RATELIMIT_STORAGE_URI must point at shared Redis so replicas share buckets")
+    if os.getenv("DEV_NO_LIMITS", "false").lower() == "true":
+        problems.append("DEV_NO_LIMITS must never be enabled in production")
     if problems:
         raise RuntimeError("Refusing to start in production with unsafe configuration: " + "; ".join(problems))
 
@@ -66,6 +79,18 @@ else:
     }
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 TRUST_PROXY = os.getenv("TRUST_PROXY", "false").lower() == "true"
+
+
+def limits_disabled() -> bool:
+    """True only for local development with DEV_NO_LIMITS=true.
+
+    Disables rate limiting and daily session budgets so the platform can be
+    exercised freely in guest and signed-in sessions while developing.
+    Never true in production (startup validation refuses that combination).
+    """
+    return not IS_PRODUCTION and os.getenv("DEV_NO_LIMITS", "false").lower() == "true"
+
+
 DAILY_SESSION_LIMIT = 100
 PER_USER_DAILY_LIMIT = int(os.getenv("PER_USER_DAILY_SESSION_LIMIT", "25"))
 INJECTION_PATTERNS = (
@@ -91,36 +116,9 @@ limiter = Limiter(
 )
 inline_tasks: set[asyncio.Task] = set()
 
-def can_access_session(session_row: SpecSession, user: User | None) -> bool:
-    """Guest sessions (user_id=None) are open. Owned sessions require the matching user."""
-    if session_row.user_id is None:
-        return True
-    return user is not None and session_row.user_id == user.id
-
-def require_session_access(db: Session, sid: UUID, user: User | None) -> SpecSession:
-    """Load a Session and enforce the Ownership Rule at one seam.
-
-    404 when the Session does not exist, 403 when it is owned by someone else.
-    Every REST access path goes through here so the rule cannot drift.
-    """
-    row = db.get(SpecSession, sid)
-    if row is None:
-        raise HTTPException(404, "Session not found")
-    if not can_access_session(row, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-    return row
-
-def require_risk_access(db: Session, rid: UUID, user: User | None) -> tuple[Risk, SpecSession]:
-    """Load a Risk (404 when absent) and enforce the Ownership Rule via its
-    Session (403 when closed). Returns both rows; the Session's status is
-    often needed for in-flight guards."""
-    risk = db.get(Risk, rid)
-    if risk is None:
-        raise HTTPException(404, "Risk not found")
-    session_row = db.get(SpecSession, risk.session_id)
-    if not session_row or not can_access_session(session_row, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
-    return risk, session_row
+# Session access control moved to core.ownership (Candidate 4); the
+# implementations are re-exported above. What remains here is rate
+# limiting, budgets, audit logging, and dispatch.
 
 def reject_prompt_injection(raw_spec: str, client_ip: str) -> None:
     """Reject obvious instruction-override attempts before they reach an LLM."""
@@ -149,8 +147,11 @@ def reserve_daily_session(user: User | None = None) -> None:
     Authenticated users draw from a per-user allowance first (best-effort
     pre-check; the authoritative enforcement happens inside the session-insert
     transaction in the sessions route); the global SQLite-backed budget
-    remains as an atomic runaway backstop.
+    remains as an atomic runaway backstop. Skipped entirely when local
+    development limits are disabled (DEV_NO_LIMITS=true).
     """
+    if limits_disabled():
+        return
     if user is not None:
         with Session(engine) as db:
             created_today = per_user_sessions_today(db, user.id)
