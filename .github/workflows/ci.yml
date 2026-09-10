@@ -21,7 +21,7 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: ruff check . --exclude .venv
-      - run: python -m mypy main.py auth.py broker.py database.py models.py pipeline_runner.py risk_service.py worker.py logging_config.py llm_gateway.py graph.py scripts/backfill_risks.py
+      - run: python -m mypy core db routes services main.py worker.py scripts/backfill_risks.py
 
   backend-tests:
     name: Backend tests
@@ -135,4 +135,5 @@ jobs:
       # which enforces the pinned-dependency policy.
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       - run: npm run build

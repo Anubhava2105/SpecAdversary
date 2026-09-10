@@ -75,7 +75,7 @@ services:
     # The worker has no HTTP surface; a healthy Redis round-trip means the
     # process is alive and its event loop isn't blocked.
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import asyncio,os,redis; c=redis.asyncio.from_url(os.environ['REDIS_URL'],decode_responses=True); asyncio.run(c.ping()); asyncio.run(c.aclose())\""]
+      test: ["CMD-SHELL", "python -c \"import os,redis; r=redis.from_url(os.environ['REDIS_URL']); r.ping()\""]
       interval: 30s
       timeout: 10s
       retries: 3
