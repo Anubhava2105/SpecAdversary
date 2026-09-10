@@ -15,7 +15,7 @@ from passlib.context import CryptContext
 from sqlmodel import Session, select
 
 from db.database import engine
-from db.models import RefreshToken, User
+from db.models import EmailToken, RefreshToken, User
 
 # ── Config ──────────────────────────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-insecure-change-me-in-production")
@@ -129,6 +129,60 @@ def revoke_user_refresh_tokens(user_id: UUID) -> None:
 def hash_token(token: str) -> str:
     """Only hashes of tokens are persisted — a DB leak cannot mint sessions."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# ── Single-use email tokens (verification + password reset) ──────────────
+EMAIL_TOKEN_VERIFY = "verify"
+EMAIL_TOKEN_RESET = "reset"
+VERIFY_TOKEN_TTL = timedelta(hours=24)
+RESET_TOKEN_TTL = timedelta(hours=1)
+
+
+def create_email_token(user_id: UUID, purpose: str, ttl: timedelta) -> str:
+    """Mint a single-use email token; returns the raw token for the link.
+
+    Any previous live token of the same purpose is superseded implicitly:
+    consuming marks exactly one row used, and only unused rows redeem.
+    Stale rows are harmless (they expire) and cleaned lazily on consume.
+    """
+    import secrets
+
+    raw = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        db.add(EmailToken(
+            user_id=user_id,
+            purpose=purpose,
+            token_hash=hash_token(raw),
+            expires_at=now + ttl,
+        ))
+        db.commit()
+    return raw
+
+
+def consume_email_token(raw_token: str, purpose: str) -> UUID:
+    """Redeem a raw email token for its user id, marking it used.
+
+    Raises 401 for unknown, wrong-purpose, expired, or already-used tokens.
+    The failure detail is intentionally uniform — token validity must not
+    leak which emails exist or which tokens were issued.
+    """
+    now = datetime.now(timezone.utc)
+    with Session(engine) as db:
+        row = db.exec(
+            select(EmailToken).where(EmailToken.token_hash == hash_token(raw_token))
+        ).first()
+        if (
+            row is None
+            or row.purpose != purpose
+            or row.used_at is not None
+            or (row.expires_at and row.expires_at.replace(tzinfo=timezone.utc) < now)
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        row.used_at = now
+        db.add(row)
+        db.commit()
+        return row.user_id
 
 
 def create_websocket_ticket(user_id: UUID) -> str:

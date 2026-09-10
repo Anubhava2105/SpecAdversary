@@ -13,9 +13,15 @@ from sqlmodel import Session, select
 
 from core import deps
 from core.auth import (
+    EMAIL_TOKEN_RESET,
+    EMAIL_TOKEN_VERIFY,
     GITHUB_CLIENT_ID,
     GOOGLE_CLIENT_ID,
+    RESET_TOKEN_TTL,
+    VERIFY_TOKEN_TTL,
+    consume_email_token,
     create_access_token,
+    create_email_token,
     create_refresh_token,
     decode_token,
     exchange_github_code,
@@ -26,6 +32,7 @@ from core.auth import (
     rotate_refresh_token,
     verify_password,
 )
+from core.email import send_reset_email, send_verification_email
 from db.database import engine
 from db.models import SpecSession, User
 
@@ -48,8 +55,23 @@ def _token_pair(user: User) -> dict:
     return {
         "access_token": create_access_token(user.id),
         "refresh_token": create_refresh_token(user.id),
-        "user": {"id": str(user.id), "email": user.email, "display_name": user.display_name},
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "display_name": user.display_name,
+            "email_verified": user.email_verified,
+        },
     }
+
+
+def _send_verification(user_id, email: str) -> None:
+    """Issue a verification token and email the link. Best-effort by design:
+    SMTP outages must never fail signup — the resend endpoint covers retries."""
+    try:
+        token = create_email_token(user_id, EMAIL_TOKEN_VERIFY, VERIFY_TOKEN_TTL)
+        send_verification_email(email, token)
+    except Exception:
+        logger.exception("Verification email failed for %s", email)
 
 
 def _claim_guest_session(db: Session, user_id, claim_session_id: str | None) -> None:
@@ -122,6 +144,8 @@ async def signup(request: Request, payload: SignupPayload):
 
         _claim_guest_session(db, user.id, payload.claim_session_id)
 
+        _send_verification(user.id, user.email)
+
         return _token_pair(user)
 
 
@@ -156,7 +180,86 @@ async def logout(request: Request, payload: RefreshPayload):
 
 @router.get("/auth/me")
 async def get_me(user: User = Depends(get_current_user)):
-    return {"id": str(user.id), "email": user.email, "display_name": user.display_name}
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "display_name": user.display_name,
+        "email_verified": user.email_verified,
+    }
+
+
+class ForgotPasswordPayload(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordPayload(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class VerifyEmailPayload(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+
+
+@router.post("/auth/forgot-password")
+@deps.limiter.limit("5/hour")
+async def forgot_password(request: Request, payload: ForgotPasswordPayload):
+    """Start a password reset. Always 200: the response must not reveal
+    whether an address is registered (user-enumeration guard)."""
+    email = _normalize_email(payload.email)
+    with Session(engine) as db:
+        user = db.exec(select(User).where(User.email == email)).first()
+        if user is not None and user.password_hash is not None:
+            token = create_email_token(user.id, EMAIL_TOKEN_RESET, RESET_TOKEN_TTL)
+            try:
+                send_reset_email(user.email, token)
+            except Exception:
+                logger.exception("Reset email failed for %s", email)
+            deps.audit_logger.info("password_reset_requested - user=%s", user.id)
+    return {"status": "ok"}
+
+
+@router.post("/auth/reset-password")
+@deps.limiter.limit("10/hour")
+async def reset_password(request: Request, payload: ResetPasswordPayload):
+    """Redeem a reset token for a new password. Single-use: consume marks
+    the token, and every refresh family is revoked so stolen sessions die."""
+    user_id = consume_email_token(payload.token, EMAIL_TOKEN_RESET)
+    with Session(engine) as db:
+        user = db.get(User, user_id)
+        if user is None or user.password_hash is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        user.password_hash = hash_password(payload.password)
+        db.add(user)
+        db.commit()
+    revoke_user_refresh_tokens(user_id)
+    deps.audit_logger.info("password_reset_completed - user=%s", user_id)
+    return {"status": "ok"}
+
+
+@router.post("/auth/verify-email")
+@deps.limiter.limit("30/hour")
+async def verify_email(request: Request, payload: VerifyEmailPayload):
+    """Redeem a verification token. Idempotent: re-verifying a verified
+    address still returns ok (mail clients prefetch links)."""
+    user_id = consume_email_token(payload.token, EMAIL_TOKEN_VERIFY)
+    with Session(engine) as db:
+        user = db.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        user.email_verified = True
+        db.add(user)
+        db.commit()
+    deps.audit_logger.info("email_verified - user=%s", user_id)
+    return {"status": "ok"}
+
+
+@router.post("/auth/resend-verification")
+@deps.limiter.limit("5/hour")
+async def resend_verification(request: Request, user: User = Depends(get_current_user)):
+    if not user.email_verified:
+        _send_verification(user.id, user.email)
+    return {"status": "ok"}
 
 
 # ── OAuth: Google ──────────────────────────────────────────────────────────
@@ -248,6 +351,9 @@ async def _oauth_upsert(provider: str, provider_id: str, email: str, display_nam
                     oauth_provider=provider,
                     oauth_provider_id=provider_id,
                 )
+            # The provider verified this address (unverified raises above),
+            # so OAuth accounts skip the email-verification flow entirely.
+            user.email_verified = True
             db.add(user)
             db.commit()
             db.refresh(user)

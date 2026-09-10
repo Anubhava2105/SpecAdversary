@@ -94,6 +94,23 @@ class User(SQLModel, table=True):
     display_name: str = ""
     oauth_provider: str | None = None
     oauth_provider_id: str | None = None
+    email_verified: bool = False
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class EmailToken(SQLModel, table=True):
+    """Single-use email token for verification and password reset.
+
+    Only the SHA-256 hash is persisted — a DB leak cannot redeem tokens.
+    Each token has a purpose (`verify` or `reset`), an expiry, and a
+    `used_at` stamp enforcing single use.
+    """
+    id: UUID = SQLField(default_factory=uuid4, primary_key=True)
+    user_id: UUID = SQLField(foreign_key="user.id", index=True)
+    purpose: str = SQLField(index=True)
+    token_hash: str = SQLField(unique=True, index=True)
+    expires_at: datetime
+    used_at: datetime | None = None
     created_at: datetime = SQLField(default_factory=lambda: datetime.now(timezone.utc))
 
 
