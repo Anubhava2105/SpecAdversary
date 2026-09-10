@@ -1,12 +1,10 @@
 """Tests for POST /sessions/{sid}/cancel: user-initiated run cancellation."""
 import asyncio
-from datetime import datetime, timezone
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
-
-import pytest
 
 import routes.session_routes as session_routes
 from core import deps
