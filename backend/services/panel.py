@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from db.models import Critic
 
-# Panel order. The index is the exhibit letter (A-G) and the sort key, so
+# Panel order. The index is the exhibit letter (A-H) and the sort key, so
 # inserting a critic mid-panel renames later exhibits — append newcomers.
 CRITIC_ORDER: tuple[Critic, ...] = (
     Critic.assumption,
@@ -32,6 +32,7 @@ CRITIC_ORDER: tuple[Critic, ...] = (
     Critic.security,
     Critic.compliance,
     Critic.marketing,
+    Critic.dissent,
 )
 
 # Sessions fan out to these critics unless the user picks others. Mirrored
@@ -47,6 +48,7 @@ CRITIC_META: dict[Critic, dict[str, str]] = {
     Critic.security: {"title": "Security Auditor", "job": "Looks for auth gaps, leaks, and insecure defaults."},
     Critic.compliance: {"title": "Compliance Critic", "job": "Flags regulatory exposure."},
     Critic.marketing: {"title": "Marketing Critic", "job": "Tests whether buyers will care."},
+    Critic.dissent: {"title": "Dissenting Critic", "job": "Attacks the validated findings before synthesis."},
 }
 
 

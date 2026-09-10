@@ -19,6 +19,7 @@ class Critic(str, Enum):
     security = "security"
     compliance = "compliance"
     marketing = "marketing"
+    dissent = "dissent"
 class Severity(str, Enum):
     structural = "structural"
     significant = "significant"
@@ -37,6 +38,18 @@ class RunStatus(str, Enum):
     succeeded = "succeeded"
     failed = "failed"
     cancelled = "cancelled"
+class FindingSource(BaseModel):
+    """A tool-grounded citation attached to a finding.
+
+    Grounded critics (web search today) must cite the sources behind factual
+    claims so readers — and the citation gate in deterministic moderation —
+    can verify them. URLs are validated as http(s) at the gate; fetching and
+    checking contents is explicitly out of scope for v1.
+    """
+    url: str = Field(description="Source URL the claim is grounded in")
+    excerpt: str = Field(default="", description="Short quoted supporting excerpt")
+
+
 class Finding(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     critic: Critic
@@ -46,6 +59,7 @@ class Finding(BaseModel):
     suggested_fix: str | None = None
     thread: list[dict[str, str]] = Field(default_factory=list, description="Conversation thread between user and critic")
     dismissed: bool = False
+    sources: list[FindingSource] = Field(default_factory=list, description="Tool citations backing factual claims")
 class FindingsResponse(BaseModel):
     """Structured-output wrapper: each critic response is Pydantic validated."""
     findings: list[Finding] = Field(default_factory=list)
@@ -57,6 +71,7 @@ class ModeratedFinding(BaseModel):
     claim: str
     critique: str
     suggested_fix: str | None = None
+    sources: list[FindingSource] = Field(default_factory=list)
 class ModeratorResponse(BaseModel):
     findings: list[ModeratedFinding] = Field(default_factory=list)
 class ParsedSpec(BaseModel):
@@ -120,6 +135,7 @@ class AnalysisRun(SQLModel, table=True):
     id: UUID = SQLField(default_factory=uuid4, primary_key=True)
     session_id: UUID = SQLField(foreign_key="specsession.id", index=True)
     status: RunStatus = RunStatus.queued
+    token_usage: int | None = SQLField(default=None, description="Cumulative LLM tokens charged to the run budget")
     re_evaluate_finding_id: str | None = None
     attempt: int = 0
     error_code: str | None = None

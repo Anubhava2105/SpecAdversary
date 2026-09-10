@@ -147,7 +147,15 @@ async def list_sessions(
 async def get_session(request: Request, sid: UUID, user: User | None = Depends(get_optional_user)):
     with Session(engine) as db:
         row = require_session_access(db, sid, user)
-    return row
+        data = row.model_dump(mode="json")
+        # Latest recorded run spend, so reloaded reports keep their cost
+        # readout without replaying the stream. None when no run finished.
+        data["token_usage"] = db.exec(
+            select(AnalysisRun.token_usage)
+            .where(AnalysisRun.session_id == sid, AnalysisRun.token_usage.is_not(None))
+            .order_by(col(AnalysisRun.created_at).desc())
+        ).first()
+    return data
 
 
 @router.post("/sessions/{sid}/stream-ticket")

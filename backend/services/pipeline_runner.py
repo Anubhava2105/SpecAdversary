@@ -44,6 +44,24 @@ def _save(db: Session, *rows) -> None:
     db.commit()
 
 
+def _record_token_usage(run_id: UUID, used: int) -> None:
+    """Persist cumulative run cost for the report header.
+
+    Best-effort and idempotent: usage reporting must never fail a run that
+    already succeeded (or failed) for real reasons.
+    """
+    try:
+        with Session(engine) as db:
+            run = db.get(AnalysisRun, run_id)
+            if run is None:
+                return
+            run.token_usage = used
+            db.add(run)
+            db.commit()
+    except Exception:
+        logger.exception("Token usage persist failed for run %s (non-fatal)", run_id)
+
+
 async def emit_event(run_id: UUID, event: dict) -> None:
     """Persist an event, then fan it out to live WebSocket subscribers.
 
@@ -282,7 +300,9 @@ async def execute_run(run_id: UUID) -> None:
         except Exception:
             logger.exception("Risk upsert failed for run %s (non-fatal)", run_id)
         _apply_run_transition(run_id, RunStatus.succeeded)
-        await emit_event(run_id, {"type": "done", "revised_spec": revised_spec})
+        used = end_token_budget()
+        _record_token_usage(run_id, used)
+        await emit_event(run_id, {"type": "done", "revised_spec": revised_spec, "token_usage": used})
     except BudgetExceeded as exc:
         logger.warning("Run %s stopped: %s", run_id, exc)
         await _fail_run(run_id, "budget_exceeded", "Analysis exceeded its processing budget. Please try again.")
@@ -294,9 +314,13 @@ async def execute_run(run_id: UUID) -> None:
         logger.exception("Pipeline failed for run %s", run_id)
         await _fail_run(run_id, "pipeline_failed", "Analysis failed. Please try again.")
     finally:
+        # On the success path the budget was already ended (and recorded)
+        # above, so this is 0 there; on failure paths it captures the spend
+        # up to the failure and persists it exactly once.
         used = end_token_budget()
         set_run_tier(None)
         if used:
+            _record_token_usage(run_id, used)
             logger.info("run=%s token_usage=%d budget_limit=%d", run_id, used, RUN_TOKEN_BUDGET)
 
 

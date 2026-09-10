@@ -7,6 +7,7 @@ import logging
 import operator
 import os
 from typing import Annotated, Any, TypedDict
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from langchain_core.tools import tool
@@ -29,7 +30,11 @@ LLM_SEMAPHORE = asyncio.Semaphore(2)
 TOOL_TIMEOUT_SECONDS = 12
 # Two rounds of grounded searching: a third rarely changes the findings but
 # adds two full serial LLM round-trips to the pipeline's critical path.
-MAX_COMPETITOR_TOOL_CALLS = 2
+MAX_GROUNDED_TOOL_CALLS = 2
+# Critics whose findings routinely assert external facts run the grounded
+# tool loop (web search + citations) instead of the single-parse path.
+# Tavily bills per search: this set directly bounds grounding spend.
+GROUNDED_CRITICS = frozenset({Critic.competitor, Critic.security, Critic.compliance, Critic.feasibility})
 CANONICAL_CONTEXT_FIELDS = (
     "problem_statement", "target_users", "core_solution",
     "technical_architecture", "business_model", "risks",
@@ -104,8 +109,53 @@ def preserve_moderated_identity(candidate: list[dict[str, Any]], originals: list
         normalized["id"] = source["id"]
         normalized["thread"] = source.get("thread", [])
         normalized["dismissed"] = source.get("dismissed", False)
+        # Sources are audit data: restore the critic's citations rather than
+        # trusting anything the moderator invented.
+        normalized["sources"] = source.get("sources", [])
         retained.append(normalized)
         seen.add(source["id"])
+    return retained
+
+
+def _valid_source_url(url: Any) -> bool:
+    """Conservative URL check for finding citations: parseable http(s) only.
+
+    This catches fabricated non-URLs and wrong-scheme strings. It does NOT
+    verify the URL exists or supports the claim — fetching and checking
+    contents is explicitly out of scope for v1 (see ADR-0002 when written).
+    """
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        parts = urlparse(url.strip())
+        return parts.scheme in ("http", "https") and bool(parts.netloc)
+    except Exception:
+        return False
+
+
+def enforce_citations(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop grounded-critic findings with no verifiable citation.
+
+    Critics in GROUNDED_CRITICS assert external facts through the search tool
+    and must cite tool-returned URLs. A finding with zero parseable http(s)
+    sources is either ungrounded or fabricated — either way it must not reach
+    synthesis. Reasoning-only critics (assumption, economics, marketing,
+    dissent) are untouched: their claims come from the spec itself.
+    """
+    grounded = {c.value for c in GROUNDED_CRITICS}
+    retained: list[dict[str, Any]] = []
+    for finding in findings:
+        if finding.get("critic") not in grounded:
+            retained.append(finding)
+            continue
+        sources = finding.get("sources") or []
+        if any(_valid_source_url(s.get("url")) for s in sources if isinstance(s, dict)):
+            retained.append(finding)
+            continue
+        logger.warning(
+            "Citation gate dropped %s finding %s (no verifiable source)",
+            finding.get("critic"), finding.get("id"),
+        )
     return retained
 async def _call_with_retries(label: str, failure_message: str, attempt):
     """Run an async LLM *attempt* with exponential-backoff retries.
@@ -292,6 +342,9 @@ For each issue, set `claim` to the specific data practice, feature, or claim und
  Critic.marketing:"""You are the Marketing Skeptic, one of the adversarial reviewers auditing a product/technical spec. Attack the positioning, messaging, and go-to-market assumptions: vague value props, unproven demand, channel mismatches, and claims that won't survive contact with real buyers.
 
 For each issue, set `claim` to the specific positioning, audience, or GTM claim under attack. In `critique`, explain why a real buyer would not convert and what's missing. In `suggested_fix`, propose the smallest concrete fix (e.g., a sharper message, a validation interview, a narrower beachhead). Classify severity as `structural` when the core value prop does not land, `significant` when it limits adoption, and `minor` for polish. Return between 2 and 5 findings. Every finding's critic must be `marketing`.""",
+ Critic.dissent:"""You are the Dissenting Critic, the final reviewer before synthesis. The findings below already survived moderation — your job is to attack THEM, not the raw spec. Find what the panel still got wrong: surviving holes the synthesis would gloss over, findings that are overstated or rest on shaky logic, contradictions between findings the moderator missed, and important risks no critic raised.
+
+ For each issue, set `claim` to the specific validated finding or gap under attack (quote it). In `critique`, explain concretely why the finding is wrong, weak, or insufficient and what breaks if synthesis trusts it. In `suggested_fix`, give the correction or the missing safeguard. Return between 2 and 4 NEW findings only — never restate an existing finding as your own. Do not invent missing facts. Every finding's critic must be `dissent`.""",
 }
 async def critic(state, kind):
     writer, sections = get_stream_writer(), state["parsed_sections"]
@@ -332,22 +385,35 @@ async def search_web(query: str) -> str:
         logger.exception("Tavily search failed")
         return f"Search failed: {e}"
 
-async def competitor_simulator(state):
+SOURCES_INSTRUCTION = (
+    " For every finding grounded in search results, include `sources`: a list of "
+    "{url, excerpt} objects using ONLY URLs returned by the search tool above. "
+    "Findings based solely on the specification need no sources."
+)
+
+
+async def grounded_critic(state, kind: Critic, search_task: str, count_rule: str):
+    """Agentic critic loop with bounded web-search grounding.
+
+    Extracted from competitor_simulator so fact-heavy critics share one tool
+    loop, one sanitizer, and one citation contract. Falls back to the
+    single-parse critic path when the agent loop fails.
+    """
     writer, sections = get_stream_writer(), state["parsed_sections"]
     if not llm_enabled():
-        return await critic(state, Critic.competitor)
+        return await critic(state, kind)
 
     client = get_client()
     spec_text = "\n\n".join(f"## {k}\n{v}" for k,v in sections.items())
     system_prompt = (
-        panel_registry.brief_for(Critic.competitor) +
-        " Return between 2 and 5 findings. Set critic to 'competitor'. Do not invent missing facts. "
-        "You have access to a web search tool. Use it to find actual real-world competitors for the proposed product."
+        panel_registry.brief_for(kind) +
+        f" {count_rule} Set critic to '{kind.value}'. Do not invent missing facts. "
+        f"You have access to a web search tool. {search_task}{SOURCES_INSTRUCTION}"
     )
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Here is the product spec:\n{spec_text}\n\nSearch for real competitors."}
+        {"role": "user", "content": f"Here is the product spec:\n{spec_text}\n\n{search_task}"}
     ]
 
     tools = [{
@@ -361,7 +427,7 @@ async def competitor_simulator(state):
 
     tool_calls_used = 0
     try:
-        for _ in range(MAX_COMPETITOR_TOOL_CALLS + 1):
+        for _ in range(MAX_GROUNDED_TOOL_CALLS + 1):
             msg = await competitor_completion_message(client, messages, tools=tools, tool_choice="auto")
             messages.append(msg.model_dump(exclude_none=True))
 
@@ -372,7 +438,7 @@ async def competitor_simulator(state):
             # made the competitor the critical path of the whole pipeline.
             pending: list[tuple[dict[str, Any], asyncio.Task]] = []
             for tool_call in msg.tool_calls:
-                if tool_calls_used >= MAX_COMPETITOR_TOOL_CALLS:
+                if tool_calls_used >= MAX_GROUNDED_TOOL_CALLS:
                     # Send a placeholder result so the model doesn't see a dangling tool call
                     messages.append({
                         "tool_call_id": tool_call.id,
@@ -418,18 +484,48 @@ async def competitor_simulator(state):
         if raw is None:
             raise ValueError("Empty response")
         result_json = FindingsResponse.model_validate_json(raw)
-        rows = [x.model_copy(update={"critic": Critic.competitor, "id": str(uuid4())}).model_dump(mode="json") for x in result_json.findings]
+        rows = [x.model_copy(update={"critic": kind, "id": str(uuid4())}).model_dump(mode="json") for x in result_json.findings]
     except Exception as e:
-        logger.exception("Failed to parse agent JSON: %s", e)
-        return await critic(state, Critic.competitor)
+        logger.exception("Grounded critic %s failed: %s", kind.value, e)
+        return await critic(state, kind)
 
     for finding in rows: writer({"type":"finding", "finding":finding})
     return {"findings": rows}
 
+
+async def competitor_simulator(state):
+    return await grounded_critic(
+        state, Critic.competitor,
+        "Use it to find actual real-world competitors for the proposed product.",
+        "Return between 2 and 5 findings.",
+    )
+
+
+async def feasibility_auditor(state):
+    return await grounded_critic(
+        state, Critic.feasibility,
+        "Use it to verify concrete technical facts you assert (integration limits, scaling precedents, known outages).",
+        "Return between 2 and 5 findings.",
+    )
+
+
+async def security_auditor(state):
+    return await grounded_critic(
+        state, Critic.security,
+        "Use it to verify concrete security facts you assert (known CVEs, auth patterns, breach precedents).",
+        "Return between 2 and 5 findings.",
+    )
+
+
+async def compliance_auditor(state):
+    return await grounded_critic(
+        state, Critic.compliance,
+        "Use it to verify concrete regulatory facts you assert (GDPR/CCPA articles, certification requirements).",
+        "Return between 2 and 4 findings.",
+    )
+
+
 async def economics_stress_tester(s): return await critic(s,Critic.economics)
-async def feasibility_auditor(s): return await critic(s,Critic.feasibility)
-async def security_auditor(s): return await critic(s,Critic.security)
-async def compliance_auditor(s): return await critic(s,Critic.compliance)
 async def marketing_auditor(s): return await critic(s,Critic.marketing)
 
 async def critic_dispatch(state):
@@ -470,8 +566,39 @@ async def moderator(state):
     else:
         moderated = deterministic
 
+    moderated = enforce_citations(moderated)
     writer({"type": "findings_moderated", "findings": moderated})
     return {"moderated_findings": moderated}
+
+async def dissent(state):
+    """Bounded dissent pass: attack the moderated findings before synthesis.
+
+    Runs only when the session selected the dissenting critic (opt-in, off by
+    default). One serial LLM call — this is the approved substitute for a
+    convergence loop (see ADR-0001): fixed cost, no lifecycle changes.
+    """
+    if Critic.dissent.value not in (state.get("relevant_critics") or []):
+        return {}
+    writer = get_stream_writer()
+    writer({"type": "status", "status": "dissenting"})
+    base = state.get("moderated_findings", state.get("findings", []))
+    if not llm_enabled() or not base:
+        return {}
+    payload = (
+        "Original spec:\n" + state.get("raw_spec", "") +
+        "\n\nValidated findings under attack:\n" + json.dumps(base)
+    )
+    result = await parse(
+        get_client(),
+        panel_registry.brief_for(Critic.dissent) + " Return between 2 and 4 findings. Set critic to 'dissent'.",
+        payload,
+        FindingsResponse,
+    )
+    rows = [x.model_copy(update={"critic": Critic.dissent, "id": str(uuid4())}).model_dump(mode="json") for x in result.findings]
+    for finding in rows:
+        writer({"type": "finding", "finding": finding})
+    return {"moderated_findings": base + rows}
+
 
 async def re_evaluate(state):
     writer = get_stream_writer()
@@ -526,6 +653,9 @@ def fan_out(s):
     mapping={"assumption":"assumption_hunter","competitor":"competitor_simulator","economics":"economics_stress_tester","feasibility":"feasibility_auditor","security":"security_auditor","compliance":"compliance_auditor","marketing":"marketing_auditor"}
     sends = []
     for x in s.get("relevant_critics") or []:
+        if x == Critic.dissent.value:
+            # Post-moderation node with its own edge; not part of fan-out.
+            continue
         node = mapping.get(x)
         if node is None:
             logger.warning("Skipping unknown critic in fan-out: %r", x)
@@ -542,7 +672,7 @@ async def synthesizer(state):
     return {"findings":unique,"revised_spec":revised}
 def build_graph():
     g=StateGraph(GraphState)
-    for name, node in [("orchestrator",orchestrator),("critic_dispatch",critic_dispatch),("assumption_hunter",assumption_hunter),("competitor_simulator",competitor_simulator),("economics_stress_tester",economics_stress_tester),("feasibility_auditor",feasibility_auditor),("security_auditor",security_auditor),("compliance_auditor",compliance_auditor),("marketing_auditor",marketing_auditor),("moderator",moderator),("re_evaluate",re_evaluate),("synthesizer",synthesizer)]: g.add_node(name,node)
+    for name, node in [("orchestrator",orchestrator),("critic_dispatch",critic_dispatch),("assumption_hunter",assumption_hunter),("competitor_simulator",competitor_simulator),("economics_stress_tester",economics_stress_tester),("feasibility_auditor",feasibility_auditor),("security_auditor",security_auditor),("compliance_auditor",compliance_auditor),("marketing_auditor",marketing_auditor),("moderator",moderator),("dissent",dissent),("re_evaluate",re_evaluate),("synthesizer",synthesizer)]: g.add_node(name,node)
     g.add_edge(START,"orchestrator")
     def route_orchestrator(state):
         return "re_evaluate" if state.get("re_evaluate_finding_id") else "critic_dispatch"
@@ -550,7 +680,10 @@ def build_graph():
     g.add_conditional_edges("critic_dispatch", fan_out)
     for critic_node in ["assumption_hunter", "competitor_simulator", "economics_stress_tester", "feasibility_auditor", "security_auditor", "compliance_auditor", "marketing_auditor"]:
         g.add_edge(critic_node, "moderator")
-    g.add_edge("moderator", "synthesizer")
+    # Dissent is a no-op passthrough unless the session opted in; reply flows
+    # (re_evaluate) bypass it exactly like they bypass moderation.
+    g.add_edge("moderator", "dissent")
+    g.add_edge("dissent", "synthesizer")
     # re_evaluate → synthesizer intentionally bypasses moderator: it updates a
     # single finding in-place, and re-running full moderation could incorrectly
     # dismiss the just-updated finding or discard unrelated findings.

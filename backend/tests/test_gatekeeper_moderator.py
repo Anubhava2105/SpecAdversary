@@ -62,7 +62,7 @@ def test_moderation_preserves_ids_threads_and_filters_dismissed():
     dismissed = finding("dismissed", dismissed=True)
     candidate = [finding("keep", critique="Consolidated critique", thread=[]), finding("invented")]
     result = preserve_moderated_identity(candidate, [kept, dismissed])
-    assert result == [{**candidate[0], "id": "keep", "thread": kept["thread"], "dismissed": False}]
+    assert result == [{**candidate[0], "id": "keep", "thread": kept["thread"], "dismissed": False, "sources": []}]
     assert deterministic_moderation([kept, dismissed]) == [kept]
 
 

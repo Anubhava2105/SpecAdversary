@@ -10,8 +10,10 @@ def test_roster_covers_every_critic_enum_member():
 
 def test_roster_order_is_stable_and_unique():
     roster = panel.list_critics()
-    assert len(roster) == len(set(roster)) == 7
+    assert len(roster) == len(set(roster)) == 8
     assert roster.index("assumption") < roster.index("marketing")
+    # Append-only rule (exhibit letters are positional): dissent is last.
+    assert roster[-1] == "dissent"
 
 
 def test_describe_matches_context_vocabulary():
@@ -38,3 +40,15 @@ def test_consumer_defaults_derive_from_registry():
 def test_brief_for_reaches_every_critic():
     for critic in Critic:
         assert len(panel.brief_for(critic)) > 100
+
+
+def test_dissent_is_opt_in_not_default():
+    assert "dissent" not in panel.default_critics()
+    assert "dissent" in panel.list_critics()
+    assert panel.describe(Critic.dissent)["title"] == "Dissenting Critic"
+
+
+def test_grounded_set_matches_tool_loop_users():
+    from services.graph import GROUNDED_CRITICS
+
+    assert {c.value for c in GROUNDED_CRITICS} == {"competitor", "security", "compliance", "feasibility"}
