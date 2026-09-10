@@ -21,10 +21,11 @@ def _finding(cid, critic, sources=None):
     }
 
 
-def test_dissent_skips_when_not_selected():
-    # Returns before touching the stream writer: no LangGraph context needed.
+def test_dissent_noops_without_findings_to_attack():
+    # Empty moderated list: returns before touching the stream writer, so no
+    # LangGraph context is needed.
     assert asyncio.run(graph.dissent({})) == {}
-    assert asyncio.run(graph.dissent({"relevant_critics": ["assumption"]})) == {}
+    assert asyncio.run(graph.dissent({"moderated_findings": []})) == {}
 
 
 def test_dissent_appends_new_findings(monkeypatch):
@@ -44,10 +45,11 @@ def test_dissent_appends_new_findings(monkeypatch):
 
     monkeypatch.setattr(graph, "parse", _fake_parse)
     base = [_finding("F1", "assumption")]
+    # No selection needed: dissent is automatic on every full run.
     state = {
         "raw_spec": "spec",
         "moderated_findings": base,
-        "relevant_critics": ["assumption", "dissent"],
+        "relevant_critics": ["assumption"],
     }
     result = asyncio.run(graph.dissent(state))
     assert len(result["moderated_findings"]) == 2

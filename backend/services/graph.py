@@ -573,16 +573,17 @@ async def moderator(state):
 async def dissent(state):
     """Bounded dissent pass: attack the moderated findings before synthesis.
 
-    Runs only when the session selected the dissenting critic (opt-in, off by
-    default). One serial LLM call — this is the approved substitute for a
-    convergence loop (see ADR-0001): fixed cost, no lifecycle changes.
+    Automatic on every full run — not user-selectable (see ADR-0001). The
+    value concentrates where users can't judge the need, and one serial LLM
+    call is a fixed ~10% overhead. No-op only when there is nothing to
+    attack yet (empty moderated list).
     """
-    if Critic.dissent.value not in (state.get("relevant_critics") or []):
+    base = state.get("moderated_findings", state.get("findings", []))
+    if not base:
         return {}
     writer = get_stream_writer()
     writer({"type": "status", "status": "dissenting"})
-    base = state.get("moderated_findings", state.get("findings", []))
-    if not llm_enabled() or not base:
+    if not llm_enabled():
         return {}
     payload = (
         "Original spec:\n" + state.get("raw_spec", "") +
@@ -654,7 +655,8 @@ def fan_out(s):
     sends = []
     for x in s.get("relevant_critics") or []:
         if x == Critic.dissent.value:
-            # Post-moderation node with its own edge; not part of fan-out.
+            # Dissent is automatic infrastructure with its own moderator→dissent
+            # edge, never fan-out — ignore it here even if a client sends it.
             continue
         node = mapping.get(x)
         if node is None:

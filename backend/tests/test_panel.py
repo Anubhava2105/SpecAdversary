@@ -42,7 +42,9 @@ def test_brief_for_reaches_every_critic():
         assert len(panel.brief_for(critic)) > 100
 
 
-def test_dissent_is_opt_in_not_default():
+def test_dissent_is_automatic_not_selectable():
+    # On the roster for rendering, but never in fan-out defaults: the graph
+    # runs it unconditionally post-moderation instead of by selection.
     assert "dissent" not in panel.default_critics()
     assert "dissent" in panel.list_critics()
     assert panel.describe(Critic.dissent)["title"] == "Dissenting Critic"
