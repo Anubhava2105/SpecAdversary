@@ -77,6 +77,12 @@ export function LoginPage() {
 
             {error && <div className="auth-error">{error}</div>}
 
+            {isLogin && (
+              <div className="auth-toggle">
+                <Link to="/forgot-password">Forgot password?</Link>
+              </div>
+            )}
+
             <button type="submit" className="auth-btn" disabled={loading}>
               {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Sign Up'}
             </button>
