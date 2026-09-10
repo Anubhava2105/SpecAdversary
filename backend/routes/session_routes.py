@@ -150,11 +150,14 @@ async def get_session(request: Request, sid: UUID, user: User | None = Depends(g
         data = row.model_dump(mode="json")
         # Latest recorded run spend, so reloaded reports keep their cost
         # readout without replaying the stream. None when no run finished.
-        data["token_usage"] = db.exec(
+        # Filtered in Python: NULL comparisons on SQLModel column attributes
+        # fail mypy (declared-type access) and == None fails ruff (E711).
+        usages = db.exec(
             select(AnalysisRun.token_usage)
-            .where(AnalysisRun.session_id == sid, AnalysisRun.token_usage.is_not(None))
+            .where(AnalysisRun.session_id == sid)
             .order_by(col(AnalysisRun.created_at).desc())
-        ).first()
+        ).all()
+        data["token_usage"] = next((u for u in usages if u is not None), None)
     return data
 
 
