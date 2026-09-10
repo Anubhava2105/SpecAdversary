@@ -25,6 +25,12 @@ export const CRITIC_TITLES: Record<Critic, string> = Object.fromEntries(
   CRITICS.map((c) => [c.id, c.title]),
 ) as Record<Critic, string>;
 
+/**
+ * Critics the user can select. Dissent runs automatically on every full run
+ * (backend graph, not fan-out), so it is display-only here, never a checkbox.
+ */
+export const SELECTABLE_CRITICS = CRITICS.filter((c) => c.id !== 'dissent');
+
 /** Default fan-out. Mirrors backend `panel.DEFAULT_CRITICS` — keep in sync. */
 export const DEFAULT_CRITICS: Critic[] = [
   'assumption',

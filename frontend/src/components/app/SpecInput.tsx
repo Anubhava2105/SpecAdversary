@@ -1,6 +1,6 @@
 import { ChevronLeft } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { CRITICS, DEFAULT_CRITICS } from '../../lib/critics';
+import { DEFAULT_CRITICS, SELECTABLE_CRITICS } from '../../lib/critics';
 import type { Critic } from '../../types';
 import { CounselCard } from './FormComponents';
 
@@ -105,14 +105,14 @@ export function SpecInput({
             type="button"
             className="select-all-action"
             onClick={() => {
-              onCriticsChange?.(selectedCritics.length === CRITICS.length ? [] : CRITICS.map(c => c.id));
+              onCriticsChange?.(selectedCritics.length === SELECTABLE_CRITICS.length ? [] : SELECTABLE_CRITICS.map(c => c.id));
             }}
           >
-            {selectedCritics.length === CRITICS.length ? 'Clear all' : 'Select all'}
+            {selectedCritics.length === SELECTABLE_CRITICS.length ? 'Clear all' : 'Select all'}
           </button>
         </div>
         <div className="counsel-cards-grid">
-          {CRITICS.map(critic => (
+          {SELECTABLE_CRITICS.map(critic => (
             <CounselCard
               key={critic.id}
               id={critic.id}
@@ -123,6 +123,7 @@ export function SpecInput({
             />
           ))}
         </div>
+        <p className="input-hint">Dissenting review runs automatically on every hearing.</p>
       </div>
 
       <textarea
