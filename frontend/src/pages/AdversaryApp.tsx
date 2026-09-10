@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ChevronRight, Maximize2, Minimize2 } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
@@ -7,10 +8,11 @@ import { ReportView } from "../components/app/ReportView";
 import { RiskRegister } from "../components/app/RiskRegister";
 import { Sidebar } from "../components/app/Sidebar";
 import { SpecInput } from "../components/app/SpecInput";
-import { API, apiFetch, errorDetail, WS_BASE } from "../lib/api";
-import type { Critic, Finding, Session } from "../types";
+import { useStreamSession } from "../hooks/useStreamSession";
+import { API, apiFetch, errorDetail } from "../lib/api";
+import { DEFAULT_CRITICS } from "../lib/critics";
+import type { Critic, Session } from "../types";
 
-const MAX_BACKOFF_MS = 30_000;
 const MOBILE_BREAKPOINT = 900;
 
 function useIsMobile() {
@@ -28,58 +30,54 @@ type ReportTab = "spec" | "risks";
 
 export default function App() {
   const [raw, setRaw] = useState("");
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [sections, setSections] = useState<string[]>([]);
-  const [missingContext, setMissingContext] = useState<string[]>([]);
-  const [status, setStatus] = useState("waiting");
-  const [revised, setRevised] = useState("");
   const [id, setId] = useState("");
   const [error, setError] = useState("");
-  const [wsConnected, setWsConnected] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedCritics, setSelectedCritics] = useState<Critic[]>([
-    "assumption",
-    "competitor",
-    "economics",
-    "feasibility",
+    ...DEFAULT_CRITICS,
   ]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isInputCollapsed, setIsInputCollapsed] = useState(false);
+  const [focusMode, setFocusMode] = useState<"report" | null>(null);
+  const [targetRiskId, setTargetRiskId] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTab>("input");
   const [reportTab, setReportTab] = useState<ReportTab>("spec");
 
   const { token, user } = useAuth();
   const isMobile = useIsMobile();
 
-  const retryCount = useRef(0);
-  const wsRef = useRef<WebSocket | null>(null);
-  // Frames can arrive late or twice (replay + live tail overlap). Once `done`
-  // lands for this run, later token/status frames are stale. Ignore them so a
-  // stray token cannot append garbage to the finished spec.
-  const streamDone = useRef(false);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
-
   const authHeaders: Record<string, string> = token
     ? { Authorization: `Bearer ${token}` }
     : {};
 
+  const {
+    findings,
+    sections,
+    missingContext,
+    status,
+    revised,
+    connected: wsConnected,
+    reset: resetStream,
+    hydrate: hydrateStream,
+  } = useStreamSession({
+    sessionId: id,
+    token,
+    authHeaders,
+    onError: setError,
+    onDone: () => setRefreshKey((k) => k + 1),
+  });
+
   const newSession = () => {
-    streamDone.current = false;
+    resetStream("waiting");
     setRaw("");
-    setFindings([]);
-    setSections([]);
-    setMissingContext([]);
-    setRevised("");
-    setStatus("waiting");
     setId("");
     setError("");
     setSelectedCritics([
-      "assumption",
-      "competitor",
-      "economics",
-      "feasibility",
+      ...DEFAULT_CRITICS,
     ]);
+    setIsInputCollapsed(false);
+    setFocusMode(null);
+    setTargetRiskId(null);
     history.replaceState(null, "", "/app");
     if (isMobile) setMobileTab("input");
   };
@@ -94,21 +92,24 @@ export default function App() {
       const x: Session = await r.json();
       setId(sessionId);
       setRaw(x.raw_spec);
-      setFindings(x.findings);
-      setSections(Object.keys(x.parsed_sections));
-      setMissingContext(x.missing_context || []);
-      setRevised(x.revised_spec || "");
-      setStatus(x.status);
-      streamDone.current = x.status === "done";
+      hydrateStream({
+        findings: x.findings,
+        sections: Object.keys(x.parsed_sections),
+        missingContext: x.missing_context || [],
+        revised: x.revised_spec || "",
+        status: x.status,
+      });
       setError("");
       setSelectedCritics(
         x.selected_critics || [
-          "assumption",
-          "competitor",
-          "economics",
-          "feasibility",
+          ...DEFAULT_CRITICS,
         ],
       );
+      if (x.status === "done" || x.status === "synthesizing") {
+        setIsInputCollapsed(true);
+      } else {
+        setIsInputCollapsed(false);
+      }
       history.replaceState(null, "", `?session=${sessionId}`);
       if (isMobile) setMobileTab("feed");
     } catch {
@@ -117,15 +118,11 @@ export default function App() {
   };
 
   const submit = async (spec: string, selectedCritics: Critic[]) => {
-    streamDone.current = false;
+    resetStream("parsing");
     setRaw(spec);
-    setFindings([]);
-    setSections([]);
-    setMissingContext([]);
-    setRevised("");
-    setStatus("parsing");
     setError("");
     setSelectedCritics(selectedCritics);
+    setIsInputCollapsed(true);
     if (isMobile) setMobileTab("feed");
     try {
       const r = await fetch(`${API}/sessions`, {
@@ -138,7 +135,7 @@ export default function App() {
       });
       if (!r.ok) {
         setError(await errorDetail(r, "Failed to create session"));
-        setStatus("waiting");
+        resetStream("waiting");
         return;
       }
       const x = await r.json();
@@ -147,104 +144,9 @@ export default function App() {
       setRefreshKey((k) => k + 1);
     } catch (err: unknown) {
       setError(`Network error: ${err instanceof Error ? err.message : 'request failed'}`);
-      setStatus("waiting");
+      resetStream("waiting");
     }
   };
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reconnects are keyed to id/token only; authHeaders is stable and would retrigger the socket
-  useEffect(() => {
-    if (!id) return;
-
-    let unmounted = false;
-
-    async function connect() {
-      if (unmounted) return;
-
-      const wsUrl = new URL(`${WS_BASE}/sessions/${id}/stream`);
-      let protocols: string[] | undefined;
-      if (token) {
-        try {
-          const response = await fetch(`${API}/sessions/${id}/stream-ticket`, {
-            method: "POST",
-            headers: authHeaders,
-          });
-          if (!response.ok) throw new Error("Could not create stream ticket");
-          const { ticket } = await response.json();
-          protocols = ["specadversary", ticket];
-        } catch {
-          setError("Could not authenticate the live connection.");
-          return;
-        }
-      }
-      if (unmounted) return;
-      const ws = protocols ? new WebSocket(wsUrl.toString(), protocols) : new WebSocket(wsUrl.toString());
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setWsConnected(true);
-        // The server replays full authoritative state (snapshot + coalesced
-        // history) on every connection. Reset accumulators first so replayed
-        // events rebuild the view instead of double-appending onto stale data.
-        setRevised("");
-        setFindings([]);
-        setSections([]);
-        retryCount.current = 0;
-      };
-
-      ws.onmessage = (e) => {
-        const x = JSON.parse(e.data);
-        if (x.type === "finding") {
-          setFindings((v) => {
-            const filtered = v.filter((f) => f.id !== x.finding.id);
-            return [...filtered, x.finding];
-          });
-        }
-        if (x.type === "section_parsed")
-          setSections((v) => (v.includes(x.section) ? v : [...v, x.section]));
-        if (x.type === "gatekeeper") setMissingContext(x.missing_context || []);
-        if (x.type === "findings_moderated") setFindings(x.findings || []);
-        if (x.type === "status" && !streamDone.current) setStatus(x.status);
-        if (x.type === "token" && !streamDone.current) setRevised((v) => v + x.content);
-        if (x.type === "done") {
-          streamDone.current = true;
-          setRevised(x.revised_spec);
-          setStatus("done");
-          setRefreshKey((k) => k + 1);
-        }
-        // Every error frame the backend emits is terminal for the run
-        // (session_busy, state_conflict, cancelled, …): surface the message
-        // and move the status off whatever it was stuck on.
-        if (x.type === "error") {
-          setError(x.code ? `${x.message} (${x.code})` : x.message);
-          setStatus("failed");
-        }
-      };
-
-      ws.onclose = () => {
-        if (unmounted) return;
-        setWsConnected(false);
-        scheduleReconnect();
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    }
-
-    function scheduleReconnect() {
-      const delay = Math.min(1000 * 2 ** retryCount.current, MAX_BACKOFF_MS);
-      retryCount.current += 1;
-      reconnectTimer.current = setTimeout(connect, delay);
-    }
-
-    connect();
-
-    return () => {
-      unmounted = true;
-      clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-    };
-  }, [id, token]);
 
   // Restore session from URL on initial load
   // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately runs once on mount, not on every loadSession identity change
@@ -286,6 +188,8 @@ export default function App() {
       sessionId={id}
       authHeaders={authHeaders}
       isAuthenticated={!!user}
+      targetRiskId={targetRiskId}
+      onClearTargetRisk={() => setTargetRiskId(null)}
     />
   ) : null;
 
@@ -297,7 +201,10 @@ export default function App() {
       missingContext={missingContext}
       connected={wsConnected}
       onReply={replyToFinding}
-      selectedCritics={selectedCritics}
+      onViewRisk={(findingId) => {
+        setReportTab("risks");
+        setTargetRiskId(findingId);
+      }}
     />
   );
 
@@ -306,7 +213,8 @@ export default function App() {
       onSubmit={submit}
       busy={status !== "waiting" && status !== "done"}
       isSidebarOpen={isSidebarOpen}
-      onOpenSidebar={() => setIsSidebarOpen(true)}
+      onToggleSidebar={() => setIsSidebarOpen((v) => !v)}
+      onCollapse={() => setIsInputCollapsed(true)}
       missingContext={missingContext}
       selectedCritics={selectedCritics}
       onCriticsChange={setSelectedCritics}
@@ -316,7 +224,7 @@ export default function App() {
   const reportPanel = showReport ? (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {showRiskRegister && (
-        <nav className="report-tab-bar">
+        <nav className="report-tab-bar" style={{ display: 'flex', alignItems: 'center' }}>
           <button
             type="button"
             className={`report-tab ${reportTab === 'spec' ? 'active' : ''}`}
@@ -330,6 +238,16 @@ export default function App() {
             onClick={() => setReportTab('risks')}
           >
             Risk Register
+          </button>
+          <button
+            type="button"
+            className={`panel-focus-btn ${focusMode === 'report' ? 'active' : ''}`}
+            onClick={() => setFocusMode(prev => prev === 'report' ? null : 'report')}
+            title={focusMode === 'report' ? 'Restore standard view' : 'Focus reading view'}
+            aria-label={focusMode === 'report' ? 'Restore standard view' : 'Focus reading view'}
+            style={{ marginLeft: 'auto' }}
+          >
+            {focusMode === 'report' ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
         </nav>
       )}
@@ -348,7 +266,9 @@ export default function App() {
     </div>
   ) : (
     <section className="report empty" aria-label="Revised specification">
-      <h2 className="panel-heading">Revised spec</h2>
+      <div style={{ display: 'flex', alignItems: 'center', minHeight: '28px', marginBottom: '16px' }}>
+        <h2 className="panel-heading" style={{ margin: 0 }}>Revised spec</h2>
+      </div>
       <p>Run the critics and the revised spec appears here.</p>
       {error && (
         <p className="error" style={{ color: "#ff6b6b" }}>
@@ -362,25 +282,11 @@ export default function App() {
   if (isMobile) {
     return (
       <main className="mobile-app">
-        {!user && (
-          <div
-            style={{
-              background: "#34352f",
-              color: "#e8e4d9",
-              padding: "8px",
-              textAlign: "center",
-              fontSize: "12px",
-            }}
-          >
-            You are using a guest session.{" "}
-            <Link
-              to={`/login?claim_session=${id}`}
-              style={{ color: "#d5ff4d", textDecoration: "underline" }}
-            >
-              Sign in to save your sessions.
-            </Link>
-          </div>
-        )}
+        <div className="app-topbar">
+          <Link to="/" className="home-link" aria-label="Back to home page">
+            Spec<span>Adversary</span>
+          </Link>
+        </div>
         <div className="mobile-content">
           {mobileTab === "input" && inputPanel}
           {mobileTab === "feed" && feedPanel}
@@ -490,25 +396,11 @@ export default function App() {
         flexDirection: "column",
       }}
     >
-      {!user && (
-        <div
-          style={{
-            background: "#34352f",
-            color: "#e8e4d9",
-            padding: "8px",
-            textAlign: "center",
-            fontSize: "12px",
-          }}
-        >
-          You are using a guest session.{" "}
-          <Link
-            to={`/login?claim_session=${id}`}
-            style={{ color: "#d5ff4d", textDecoration: "underline" }}
-          >
-            Sign in to save your sessions.
-          </Link>
-        </div>
-      )}
+      <div className="app-topbar">
+        <Link to="/" className="home-link" aria-label="Back to home page">
+          Spec<span>Adversary</span>
+        </Link>
+      </div>
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {isSidebarOpen && (
           <div
@@ -531,22 +423,58 @@ export default function App() {
           </div>
         )}
 
+        {isInputCollapsed && (
+          <button
+            type="button"
+            className="input-rail-collapsed"
+            aria-label="Expand hearing input"
+            title="Click to expand hearing input"
+            onClick={() => setIsInputCollapsed(false)}
+          >
+            <span className="input-rail-expand-btn" aria-hidden="true">
+              <ChevronRight size={16} />
+            </span>
+            <span className="input-rail-label">HEARING SPEC</span>
+            <span className="input-rail-badge">{selectedCritics.length} counsel</span>
+          </button>
+        )}
+
         <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
           <Group
-            key={hasActiveSession ? "3-panel" : "2-panel"}
+            key={`${hasActiveSession ? "active" : "empty"}-${isInputCollapsed ? "collapsed" : "expanded"}-${focusMode || "normal"}`}
             orientation="horizontal"
           >
-            {hasActiveSession ? (
+            {focusMode === "report" ? (
               <>
-                <Panel defaultSize={33} minSize={20}>
-                  {inputPanel}
-                </Panel>
-                <Separator className="resize-handle" />
-                <Panel defaultSize={33} minSize={20}>
+                <Panel defaultSize={25} minSize={15}>
                   {feedPanel}
                 </Panel>
                 <Separator className="resize-handle" />
+                <Panel defaultSize={75} minSize={50}>
+                  {reportPanel}
+                </Panel>
+              </>
+            ) : isInputCollapsed ? (
+              <>
+                <Panel defaultSize={48} minSize={30}>
+                  {feedPanel}
+                </Panel>
+                <Separator className="resize-handle" />
+                <Panel defaultSize={52} minSize={30}>
+                  {reportPanel}
+                </Panel>
+              </>
+            ) : hasActiveSession ? (
+              <>
+                <Panel defaultSize={30} minSize={20}>
+                  {inputPanel}
+                </Panel>
+                <Separator className="resize-handle" />
                 <Panel defaultSize={34} minSize={20}>
+                  {feedPanel}
+                </Panel>
+                <Separator className="resize-handle" />
+                <Panel defaultSize={36} minSize={20}>
                   {reportPanel}
                 </Panel>
               </>

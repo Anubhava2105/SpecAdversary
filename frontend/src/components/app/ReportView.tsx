@@ -55,7 +55,9 @@ export function ReportView({
 
   return (
     <section className="report" aria-label="Revised specification">
-      <h2 className="panel-heading">Revised spec</h2>
+      <div style={{ display: 'flex', alignItems: 'center', minHeight: '28px', marginBottom: '16px' }}>
+        <h2 className="panel-heading" style={{ margin: 0 }}>Revised spec</h2>
+      </div>
 
       <div className="summary">
         {groups.map((g) => (

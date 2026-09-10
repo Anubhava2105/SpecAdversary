@@ -70,11 +70,20 @@ export function Sidebar({
 
   return (
     <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '28px', marginBottom: '16px' }}>
         <h2 className="panel-heading" style={{ margin: 0 }}>History</h2>
         <div style={{ display: 'flex', gap: '4px' }}>
-          <button type="button" onClick={onClose} title="Close sidebar" aria-label="Close session history" style={{ background: 'transparent', border: 'none', color: '#a7a991', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close sidebar"
+            aria-label="Close session history"
+            className="sidebar-toggle-btn sidebar-toggle-btn-open"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+            </svg>
           </button>
         </div>
       </div>

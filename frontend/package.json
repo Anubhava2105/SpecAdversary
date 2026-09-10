@@ -2,7 +2,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "lint": "biome check ."
+    "lint": "biome check .",
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=20"
@@ -23,6 +24,7 @@
     "@biomejs/biome": "2.5.10",
     "@types/diff": "8.0.0",
     "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3"
+    "@types/react-dom": "19.2.3",
+    "vitest": "3.2.4"
   }
 }

@@ -4,6 +4,11 @@ import type { Critic, Severity } from '../types';
  * Single home for critic identity (was defined 3× and already drifting:
  * "Marketing Skeptic" vs CONTEXT.md "Marketing Critic"). Titles match
  * CONTEXT.md exactly.
+ *
+ * Roster source of truth is backend `services/panel.py` (order, defaults,
+ * titles). This list mirrors it — the frontend cannot import backend code,
+ * so keep the two in sync when the panel changes (order matters: index is
+ * the exhibit letter).
  */
 export const CRITICS: { id: Critic; title: string; job: string }[] = [
   { id: 'assumption', title: 'Assumption Hunter', job: 'Finds claims you treat as facts.' },
@@ -18,6 +23,14 @@ export const CRITICS: { id: Critic; title: string; job: string }[] = [
 export const CRITIC_TITLES: Record<Critic, string> = Object.fromEntries(
   CRITICS.map((c) => [c.id, c.title]),
 ) as Record<Critic, string>;
+
+/** Default fan-out. Mirrors backend `panel.DEFAULT_CRITICS` — keep in sync. */
+export const DEFAULT_CRITICS: Critic[] = [
+  'assumption',
+  'competitor',
+  'economics',
+  'feasibility',
+];
 
 /** Severity rendered as the record's ruling language. */
 export const RULINGS: Record<Severity, { stamp: string; className: string }> = {

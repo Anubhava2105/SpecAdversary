@@ -20,9 +20,11 @@ interface Props {
   sessionId: string;
   authHeaders: Record<string, string>;
   isAuthenticated: boolean;
+  targetRiskId?: string | null;
+  onClearTargetRisk?: () => void;
 }
 
-export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props) {
+export function RiskRegister({ sessionId, authHeaders, isAuthenticated, targetRiskId, onClearTargetRisk }: Props) {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [summary, setSummary] = useState<RiskSummary | null>(null);
   const [total, setTotal] = useState(0);
@@ -95,10 +97,17 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
     }
   }, [authHeaders]);
 
-  const openDetail = (riskId: string) => {
+  const openDetail = useCallback((riskId: string) => {
     setSelectedRiskId(riskId);
     fetchDetail(riskId);
-  };
+  }, [fetchDetail]);
+
+  useEffect(() => {
+    if (targetRiskId) {
+      openDetail(targetRiskId);
+      onClearTargetRisk?.();
+    }
+  }, [targetRiskId, onClearTargetRisk, openDetail]);
 
   const closeDetail = () => {
     setSelectedRiskId(null);
@@ -119,10 +128,9 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
         throw new Error(err.detail || 'Update failed');
       }
       const updated = await r.json();
-      // Optimistic: update in list and detail
       setRisks(prev => prev.map(prevRisk => prevRisk.id === riskId ? { ...prevRisk, ...updated } : prevRisk));
       if (detailRisk?.id === riskId) setDetailRisk(prev => prev ? { ...prev, ...updated } : prev);
-      fetchRisks(); // Refresh summary counts
+      fetchRisks();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Request failed');
     } finally {
@@ -138,7 +146,6 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
         body: JSON.stringify({ body }),
       });
       if (!r.ok) throw new Error('Comment failed');
-      // Refresh detail
       fetchDetail(riskId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Request failed');
@@ -172,30 +179,50 @@ export function RiskRegister({ sessionId, authHeaders, isAuthenticated }: Props)
           <span className="risk-register-count">{total} risks</span>
         </div>
 
-        {/* Summary cards */}
+        {/* Interactive Summary HUD */}
         {summary && summary.total > 0 && (
-          <div className="risk-summary-cards">
-            <div className="risk-summary-card risk-summary-open">
+          <div className="risk-summary-cards" role="toolbar" aria-label="Risk filters">
+            <button
+              type="button"
+              className={`risk-summary-card risk-summary-open ${statusFilter === 'open' ? 'active' : ''}`}
+              onClick={() => refilter(() => setStatusFilter(prev => prev === 'open' ? '' : 'open'))}
+              title={statusFilter === 'open' ? 'Clear open filter' : 'Filter to open risks'}
+            >
               <span className="risk-summary-value">{summary.by_status?.open || 0}</span>
               <span className="risk-summary-label">Open</span>
-            </div>
-            <div className="risk-summary-card risk-summary-structural">
+            </button>
+            <button
+              type="button"
+              className={`risk-summary-card risk-summary-structural ${severityFilter === 'structural' ? 'active' : ''}`}
+              onClick={() => refilter(() => setSeverityFilter(prev => prev === 'structural' ? '' : 'structural'))}
+              title={severityFilter === 'structural' ? 'Clear structural filter' : 'Filter to structural risks'}
+            >
               <span className="risk-summary-value">{summary.by_severity?.structural || 0}</span>
               <span className="risk-summary-label">Structural</span>
-            </div>
-            <div className="risk-summary-card risk-summary-mitigating">
+            </button>
+            <button
+              type="button"
+              className={`risk-summary-card risk-summary-mitigating ${statusFilter === 'mitigating' ? 'active' : ''}`}
+              onClick={() => refilter(() => setStatusFilter(prev => prev === 'mitigating' ? '' : 'mitigating'))}
+              title={statusFilter === 'mitigating' ? 'Clear mitigating filter' : 'Filter to mitigating risks'}
+            >
               <span className="risk-summary-value">{summary.by_status?.mitigating || 0}</span>
               <span className="risk-summary-label">Mitigating</span>
-            </div>
-            <div className="risk-summary-card risk-summary-overdue">
+            </button>
+            <button
+              type="button"
+              className={`risk-summary-card risk-summary-overdue ${sortBy === 'due_date' ? 'active' : ''}`}
+              onClick={() => refilter(() => setSortBy(prev => prev === 'due_date' ? 'severity' : 'due_date'))}
+              title={sortBy === 'due_date' ? 'Clear overdue sort' : 'Sort by due date'}
+            >
               <span className="risk-summary-value">{summary.overdue}</span>
               <span className="risk-summary-label">Overdue</span>
-            </div>
+            </button>
 
             {/* Progress bar */}
             <div className="risk-progress-container">
               <div className="risk-progress-bar">
-                <div className="risk-progress-fill" style={{ width: `${progressPct}%` }} />
+                <div className="risk-progress-fill" style={{ transform: `scaleX(${Math.max(0, Math.min(1, progressPct / 100))})` }} />
               </div>
               <span className="risk-progress-label">{progressPct}% resolved</span>
             </div>

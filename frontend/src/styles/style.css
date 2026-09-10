@@ -34,7 +34,7 @@ main {
 .resize-handle[data-resize-handle-state="drag"] {
   background-color: var(--accent-acid);
 }
-.sidebar { padding: 20px 14px; background: var(--bg-sidebar) }
+.sidebar { padding: 30px 16px; background: var(--bg-sidebar) }
 .report { border: 0; background: var(--bg-report) }
 
 :root {
@@ -231,6 +231,61 @@ button:not(:disabled):active { transform: scale(0.98); }
   padding: 8px 0;
 }
 
+/* ── Spec Grounding Dossier ─────────────────────── */
+.spec-dossier-bar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.spec-dossier-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.dossier-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--accent-acid);
+}
+
+.dossier-check {
+  color: var(--accent-acid);
+  font-weight: 700;
+}
+
+.dossier-count {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.dossier-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dossier-chip {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 3px 8px;
+  text-transform: capitalize;
+}
+
 /* ── Findings (collapsible) ─────────────────────── */
 .finding {
   border-top: 2px solid;
@@ -321,6 +376,34 @@ button:not(:disabled):active { transform: scale(0.98); }
 .muted, .empty { color: var(--text-dim) }
 
 .finding-title-dismissed { text-decoration: line-through; color: var(--text-dim); }
+
+.finding-actions-row {
+  margin-top: 10px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.view-risk-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--accent-acid);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: opacity 0.15s ease;
+}
+
+.view-risk-link:hover {
+  opacity: 0.8;
+}
 
 /* ── Hearing preview (findings empty state) ────── */
 .hearing-preview {
@@ -806,25 +889,252 @@ h2 {
   box-shadow: 0 0 0 1px var(--accent-acid);
 }
 
+/* ── Adversarial Counsel Cards ───────────────────── */
+.counsel-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .counsel-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.counsel-card {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+
+.counsel-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.counsel-card.checked {
+  border-color: var(--accent-acid);
+  background: rgba(213, 255, 77, 0.04);
+}
+
+.counsel-card:focus-within {
+  border-color: var(--accent-acid);
+  box-shadow: 0 0 0 1px var(--accent-acid);
+}
+
+.counsel-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.counsel-card-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent-acid);
+  flex-shrink: 0;
+}
+
+.counsel-card:not(.checked) .counsel-card-icon {
+  color: var(--text-dim);
+}
+
+.counsel-card-title {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.counsel-card-check {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.counsel-card-check.checked {
+  background: var(--accent-acid);
+  border-color: var(--accent-acid);
+  color: #11120f;
+}
+
+.counsel-card-job {
+  margin: 0;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* ── Panel Controls & Collapsed Rail ────────────── */
+.panel-collapse-btn,
+.panel-focus-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.panel-collapse-btn:hover,
+.panel-focus-btn:hover {
+  border-color: var(--accent-acid);
+  color: var(--accent-acid);
+}
+
+.panel-focus-btn.active {
+  background: rgba(213, 255, 77, 0.12);
+  border-color: var(--accent-acid);
+  color: var(--accent-acid);
+}
+
+.input-rail-collapsed {
+  width: 42px;
+  height: 100%;
+  background: var(--bg-surface);
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  font: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.input-rail-collapsed:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.input-rail-expand-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 24px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.input-rail-expand-btn:hover {
+  border-color: var(--accent-acid);
+  color: var(--accent-acid);
+}
+
+.input-rail-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: auto;
+}
+
+.input-rail-badge {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--accent-acid);
+  padding-bottom: 8px;
+}
+
 /* ── Sidebar Toggle & Scrollbars ───────────────── */
 .sidebar-toggle-btn {
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 8px;
-  min-width: 44px;
-  min-height: 44px;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
   border-radius: 4px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: color 0.2s ease;
+  flex-shrink: 0;
 }
 .sidebar-toggle-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-strong);
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent-acid);
+}
+/* Active (sidebar open) state: same accent as hover. */
+.sidebar-toggle-btn-open {
+  color: var(--accent-acid);
+}
+
+/* ── Home link (app shell → landing) ─────────────
+   Matches the landing wordmark treatment (landing.css .nav-left .logo):
+   Newsreader 600, ink text, signal-italic accent. Sized to the panel
+   header rather than the 30px landing nav. */
+.home-link {
+  font-family: "Newsreader", Georgia, serif;
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  text-decoration: none;
   color: var(--text-primary);
+  white-space: nowrap;
+}
+.home-link span {
+  /* Landing --signal, not the shell acid: the wordmark is the landing brand. */
+  color: #e8ff47;
+  font-style: italic;
+}
+.home-link:hover {
+  color: var(--text-primary);
+}
+/* ── App topbar (shell wordmark, full-width above panels) ── */
+.app-topbar {
+  display: flex;
+  align-items: center;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+  flex-shrink: 0;
 }
 
 ::-webkit-scrollbar {
@@ -1154,9 +1464,21 @@ h2 {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  transition: border-color 0.2s ease;
+  cursor: pointer;
+  text-align: center;
+  color: inherit;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.risk-summary-card:hover { border-color: var(--border-strong); }
+.risk-summary-card:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+.risk-summary-card.active {
+  border-color: var(--accent-acid);
+  box-shadow: 0 0 0 1px var(--accent-acid);
+  background: rgba(213, 255, 77, 0.05);
+}
 
 .risk-summary-value {
   font: 600 20px 'Newsreader', serif;
@@ -1194,9 +1516,11 @@ h2 {
 
 .risk-progress-fill {
   height: 100%;
+  width: 100%;
   background: var(--accent-success);
   border-radius: 2px;
-  transition: width 0.4s ease;
+  transform-origin: left center;
+  transition: transform 0.4s ease;
 }
 
 .risk-progress-label {

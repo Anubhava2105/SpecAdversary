@@ -1,15 +1,18 @@
+import { ChevronLeft } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { CRITICS } from '../../lib/critics';
+import { CRITICS, DEFAULT_CRITICS } from '../../lib/critics';
 import type { Critic } from '../../types';
-import { Checkbox } from './FormComponents';
+import { CounselCard } from './FormComponents';
 
-const DEFAULT_CRITICS: Critic[] = ['assumption', 'competitor', 'economics', 'feasibility'];
+// Re-exported so callers can share the default without importing lib directly.
+export { DEFAULT_CRITICS };
 
 export function SpecInput({
   onSubmit,
   busy,
   isSidebarOpen,
-  onOpenSidebar,
+  onToggleSidebar,
+  onCollapse,
   missingContext = [],
   selectedCritics = DEFAULT_CRITICS,
   onCriticsChange,
@@ -17,7 +20,8 @@ export function SpecInput({
   onSubmit: (spec: string, selectedCritics: Critic[]) => void;
   busy: boolean;
   isSidebarOpen?: boolean;
-  onOpenSidebar?: () => void;
+  onToggleSidebar?: () => void;
+  onCollapse?: () => void;
   missingContext?: string[];
   selectedCritics?: Critic[];
   onCriticsChange?: (critics: Critic[]) => void;
@@ -62,25 +66,41 @@ export function SpecInput({
 
   return (
     <section className="input-panel" aria-label="Spec input">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '28px' }}>
-        {!isSidebarOpen && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minHeight: '28px', marginBottom: '16px' }}>
+        {!isSidebarOpen && onToggleSidebar && (
           <button
             type="button"
-            onClick={onOpenSidebar}
+            onClick={onToggleSidebar}
             title="Open sidebar"
             aria-label="Open session history"
+            aria-expanded={false}
             className="sidebar-toggle-btn"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+            </svg>
           </button>
         )}
         <h2 className="panel-heading" style={{ margin: 0 }}>New hearing</h2>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="panel-collapse-btn"
+            title="Collapse input panel"
+            aria-label="Collapse input panel"
+            style={{ marginLeft: 'auto' }}
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
       </div>
 
       {/* Critic Selection */}
-      <div className="critics-select" style={{ marginBottom: '30px' }}>
+      <div className="critics-select" style={{ marginBottom: '24px' }}>
         <div className="critics-select-head">
-          <h3 className="panel-subheading" style={{ margin: 0 }}>Critics</h3>
+          <h3 className="panel-subheading" style={{ margin: 0 }}>Adversarial Counsel</h3>
           <button
             type="button"
             className="select-all-action"
@@ -91,11 +111,13 @@ export function SpecInput({
             {selectedCritics.length === CRITICS.length ? 'Clear all' : 'Select all'}
           </button>
         </div>
-        <div className="checkbox-options">
+        <div className="counsel-cards-grid">
           {CRITICS.map(critic => (
-            <Checkbox
+            <CounselCard
               key={critic.id}
-              label={critic.title}
+              id={critic.id}
+              title={critic.title}
+              job={critic.job}
               checked={isSelected(critic.id)}
               onChange={() => toggleCritic(critic.id)}
             />

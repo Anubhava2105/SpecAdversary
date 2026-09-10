@@ -2,51 +2,7 @@ import { ChevronRight, CornerDownRight } from 'lucide-react';
 import { useState } from 'react';
 import { CRITIC_TITLES, CRITICS, RULINGS } from '../../lib/critics';
 import { safeText } from '../../lib/text';
-import type { Critic, Finding } from '../../types';
-
-function CriticTimeline({
-  selectedCritics,
-  findings,
-  status,
-}: {
-  selectedCritics: Critic[];
-  findings: Finding[];
-  status: string;
-}) {
-  if (selectedCritics.length === 0 || status === 'waiting') return null;
-
-  const criticCounts = findings.reduce((acc, finding) => {
-    acc[finding.critic] = (acc[finding.critic] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  const isActive = status === 'critiquing' || status === 'parsing' || status === 'moderating' || status === 'synthesizing';
-
-  return (
-    <ul className="critic-timeline" aria-label="Counsel progress">
-      {selectedCritics.map((critic) => {
-        const count = criticCounts[critic] || 0;
-        const criticState = count > 0
-          ? 'done'
-          : status === 'done'
-            ? 'empty'
-            : isActive && status !== 'parsing'
-              ? 'running'
-              : 'pending';
-        return (
-          <li key={critic} className={`critic-step ${criticState}`}>
-            <span className={`critic-dot ${criticState}`} aria-hidden="true" />
-            <span className="critic-step-label">{CRITIC_TITLES[critic] ?? critic}</span>
-            {status === 'done' && (
-              <span style={{ marginLeft: 'auto', fontSize: '10px', color: criticState === 'empty' ? '#7b7d6f' : '#d5ff4d' }}>
-                {count} {count === 1 ? 'finding' : 'findings'}
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
+import type { Finding } from '../../types';
 
 export function LiveFeed({
   findings,
@@ -55,7 +11,7 @@ export function LiveFeed({
   missingContext,
   connected,
   onReply,
-  selectedCritics = [],
+  onViewRisk,
 }: {
   findings: Finding[];
   status: string;
@@ -63,11 +19,13 @@ export function LiveFeed({
   missingContext: string[];
   connected: boolean;
   onReply?: (findingId: string, reply: string) => void;
-  selectedCritics?: Critic[];
+  onViewRisk?: (findingId: string) => void;
 }) {
   return (
     <section className="feed" aria-label="Live findings">
-      <h2 className="panel-heading">Findings</h2>
+      <div style={{ display: 'flex', alignItems: 'center', minHeight: '28px', marginBottom: '16px' }}>
+        <h2 className="panel-heading" style={{ margin: 0 }}>Findings</h2>
+      </div>
       {!connected && (
         <div className="ws-status" role="status">
           <span className="dot reconnecting" aria-hidden="true" />
@@ -84,21 +42,39 @@ export function LiveFeed({
           <span>{missingContext.map(safeText).join(' · ')}</span>
         </aside>
       )}
-      <CriticTimeline
-        selectedCritics={selectedCritics}
-        findings={findings}
-        status={status}
-      />
-      {sections.map((x) => (
-        <div className="section-event" key={x}>
-          PARSED <b>{safeText(x)}</b>
-        </div>
-      ))}
+
+      {/* Grounded Spec Dossier */}
+      {sections.length > 0 && (
+        <section className="spec-dossier-bar" aria-label="Grounded spec sections">
+          <div className="spec-dossier-header">
+            <span className="dossier-tag">
+              <span className="dossier-check" aria-hidden="true">✓</span>
+              SPEC GROUNDED
+            </span>
+            <span className="dossier-count">{sections.length} sections analyzed</span>
+          </div>
+          <div className="dossier-chips">
+            {sections.map((x) => (
+              <span className="dossier-chip" key={x}>
+                {safeText(x.replaceAll('_', ' '))}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="findings" role="log" aria-label="Streamed findings">
         {findings.length === 0 ? (
           <HearingPreview />
         ) : (
-          findings.map((finding, i) => <FindingCard key={finding.id || `finding-${i}`} finding={finding} onReply={onReply} />)
+          findings.map((finding, i) => (
+            <FindingCard
+              key={finding.id || `finding-${i}`}
+              finding={finding}
+              onReply={onReply}
+              onViewRisk={onViewRisk}
+            />
+          ))
         )}
       </div>
     </section>
@@ -136,7 +112,15 @@ function HearingPreview() {
   );
 }
 
-function FindingCard({ finding, onReply }: { finding: Finding, onReply?: (findingId: string, reply: string) => void }) {
+function FindingCard({
+  finding,
+  onReply,
+  onViewRisk,
+}: {
+  finding: Finding;
+  onReply?: (findingId: string, reply: string) => void;
+  onViewRisk?: (findingId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
 
@@ -166,6 +150,18 @@ function FindingCard({ finding, onReply }: { finding: Finding, onReply?: (findin
           <p>{safeText(finding.critique)}</p>
           {finding.suggested_fix && (
             <p className="fix"><CornerDownRight size={12} style={{ display: 'inline', marginRight: 4 }} aria-hidden="true" /> {safeText(finding.suggested_fix)}</p>
+          )}
+
+          {onViewRisk && finding.id && (
+            <div className="finding-actions-row">
+              <button
+                type="button"
+                className="view-risk-link"
+                onClick={() => onViewRisk(finding.id)}
+              >
+                Track in Risk Register →
+              </button>
+            </div>
           )}
 
           {finding.thread && finding.thread.length > 0 && (
