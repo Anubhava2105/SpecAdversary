@@ -6,7 +6,7 @@ import logging
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import Session, select
@@ -17,8 +17,10 @@ from core.auth import (
     EMAIL_TOKEN_VERIFY,
     GITHUB_CLIENT_ID,
     GOOGLE_CLIENT_ID,
+    REFRESH_COOKIE_NAME,
     RESET_TOKEN_TTL,
     VERIFY_TOKEN_TTL,
+    clear_refresh_cookie,
     consume_email_token,
     create_access_token,
     create_email_token,
@@ -30,6 +32,7 @@ from core.auth import (
     hash_password,
     revoke_user_refresh_tokens,
     rotate_refresh_token,
+    set_refresh_cookie,
     verify_password,
 )
 from core.email import send_reset_email, send_verification_email
@@ -50,11 +53,20 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _token_pair(user: User) -> dict:
-    """The JWT access/refresh pair plus public user shape returned at every sign-in."""
+def _token_pair(user: User, response: Response | None = None) -> dict:
+    """The JWT access/refresh pair plus public user shape returned at every sign-in.
+
+    The refresh token travels two ways: an HttpOnly cookie (what the web
+    frontend uses — page JS can never read it) and the response body (kept
+    for non-browser API clients). Both carry the same rotated token. A None
+    response (direct non-HTTP callers such as tests) skips the cookie.
+    """
+    refresh = create_refresh_token(user.id)
+    if response is not None:
+        set_refresh_cookie(response, refresh, secure=deps.IS_PRODUCTION)
     return {
         "access_token": create_access_token(user.id),
-        "refresh_token": create_refresh_token(user.id),
+        "refresh_token": refresh,
         "user": {
             "id": str(user.id),
             "email": user.email,
@@ -62,6 +74,17 @@ def _token_pair(user: User) -> dict:
             "email_verified": user.email_verified,
         },
     }
+
+
+def _refresh_token_from(request: Request, body_token: str | None) -> str | None:
+    """Refresh token from the request body first, HttpOnly cookie second.
+
+    An explicitly presented credential wins over the ambient cookie: this
+    keeps replay semantics deterministic (a superseded body token still
+    triggers reuse detection even when the jar holds a newer cookie) while
+    browsers, which never send a body token, transparently use the cookie.
+    """
+    return body_token or request.cookies.get(REFRESH_COOKIE_NAME)
 
 
 def _send_verification(user_id, email: str) -> None:
@@ -115,7 +138,8 @@ class LoginPayload(BaseModel):
 
 
 class RefreshPayload(BaseModel):
-    refresh_token: str
+    # Optional: browsers send the HttpOnly cookie instead of a body token.
+    refresh_token: str | None = None
 
 
 class OAuthCallbackPayload(BaseModel):
@@ -127,7 +151,7 @@ class OAuthCallbackPayload(BaseModel):
 # ── Auth endpoints ─────────────────────────────────────────────────────────
 @router.post("/auth/signup")
 @deps.limiter.limit("10/hour")
-async def signup(request: Request, payload: SignupPayload):
+async def signup(request: Request, response: Response, payload: SignupPayload):
     email = _normalize_email(payload.email)
     with Session(engine) as db:
         existing = db.exec(select(User).where(User.email == email)).first()
@@ -146,34 +170,44 @@ async def signup(request: Request, payload: SignupPayload):
 
         _send_verification(user.id, user.email)
 
-        return _token_pair(user)
+        return _token_pair(user, response)
 
 
 @router.post("/auth/login")
 @deps.limiter.limit("10/hour")
-async def login(request: Request, payload: LoginPayload):
+async def login(request: Request, response: Response, payload: LoginPayload):
     with Session(engine) as db:
         user = db.exec(select(User).where(User.email == _normalize_email(payload.email))).first()
         if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
-        return _token_pair(user)
+        return _token_pair(user, response)
 
 
 @router.post("/auth/refresh")
 @deps.limiter.limit("30/hour")
-async def refresh_token(request: Request, payload: RefreshPayload):
-    return rotate_refresh_token(payload.refresh_token)
+async def refresh_token(request: Request, response: Response, payload: RefreshPayload):
+    token = _refresh_token_from(request, payload.refresh_token)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
+    rotated = rotate_refresh_token(token)
+    set_refresh_cookie(response, rotated["refresh_token"], secure=deps.IS_PRODUCTION)
+    return rotated
 
 
 @router.post("/auth/logout")
 @deps.limiter.limit("10/hour")
-async def logout(request: Request, payload: RefreshPayload):
+async def logout(request: Request, response: Response, payload: RefreshPayload):
     """Revoke every refresh-token family for the token's user (server-side logout).
 
     Expiry is not verified: an expired-but-legitimate token must still log the
     user out. The signature is always verified, so the `sub` is trustworthy.
+    The cookie is cleared regardless, so a stale browser jar cannot linger.
     """
-    data = decode_token(payload.refresh_token, expected_type="refresh", verify_exp=False)
+    token = _refresh_token_from(request, payload.refresh_token)
+    clear_refresh_cookie(response, secure=deps.IS_PRODUCTION)
+    if not token:
+        return {"status": "logged_out"}
+    data = decode_token(token, expected_type="refresh", verify_exp=False)
     revoke_user_refresh_tokens(UUID(data["sub"]))
     return {"status": "logged_out"}
 
@@ -279,11 +313,11 @@ async def google_redirect():
 
 @router.post("/auth/google/callback")
 @deps.limiter.limit("10/hour")
-async def google_callback(request: Request, payload: OAuthCallbackPayload):
+async def google_callback(request: Request, response: Response, payload: OAuthCallbackPayload):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(501, "Google OAuth not configured")
     info = await _exchange_oauth("Google", exchange_google_code, payload.code, payload.redirect_uri)
-    return await _oauth_upsert("google", str(info["id"]), info.get("email", ""), info.get("name", ""), info.get("email_verified", False), payload.claim_session_id)
+    return await _oauth_upsert("google", str(info["id"]), info.get("email", ""), info.get("name", ""), info.get("email_verified", False), payload.claim_session_id, response)
 
 
 # ── OAuth: GitHub ──────────────────────────────────────────────────────────
@@ -301,14 +335,14 @@ async def github_redirect():
 
 @router.post("/auth/github/callback")
 @deps.limiter.limit("10/hour")
-async def github_callback(request: Request, payload: OAuthCallbackPayload):
+async def github_callback(request: Request, response: Response, payload: OAuthCallbackPayload):
     if not GITHUB_CLIENT_ID:
         raise HTTPException(501, "GitHub OAuth not configured")
     info = await _exchange_oauth("GitHub", exchange_github_code, payload.code, payload.redirect_uri)
-    return await _oauth_upsert("github", str(info["id"]), info.get("email", ""), info.get("name") or info.get("login", ""), info.get("email_verified", False), payload.claim_session_id)
+    return await _oauth_upsert("github", str(info["id"]), info.get("email", ""), info.get("name") or info.get("login", ""), info.get("email_verified", False), payload.claim_session_id, response)
 
 
-async def _oauth_upsert(provider: str, provider_id: str, email: str, display_name: str, email_verified: bool = True, claim_session_id: str | None = None) -> dict:
+async def _oauth_upsert(provider: str, provider_id: str, email: str, display_name: str, email_verified: bool = True, claim_session_id: str | None = None, response: Response | None = None) -> dict:
     """Find or create a user by OAuth provider, return JWT pair.
 
     The provider identity is always trusted. The *email* is only trusted for
@@ -360,4 +394,4 @@ async def _oauth_upsert(provider: str, provider_id: str, email: str, display_nam
 
         _claim_guest_session(db, user.id, claim_session_id)
 
-        return _token_pair(user)
+        return _token_pair(user, response)

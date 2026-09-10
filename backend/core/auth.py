@@ -24,6 +24,31 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 WEBSOCKET_TICKET_EXPIRE_SECONDS = 60
 
+# Refresh-token cookie: HttpOnly so page JS (and any XSS in it) cannot read
+# the long-lived credential. SameSite=Lax blocks cross-site POSTs from
+# carrying it (CSRF); Secure is enabled in production, where traffic is
+# HTTPS-only. Path is scoped to /auth, the only consumer.
+REFRESH_COOKIE_NAME = "sa_refresh"
+REFRESH_COOKIE_MAX_AGE = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600
+REFRESH_COOKIE_PATH = "/auth"
+
+
+def set_refresh_cookie(response, token: str, secure: bool) -> None:
+    """Attach the refresh token as an HttpOnly cookie on a token response."""
+    response.set_cookie(
+        REFRESH_COOKIE_NAME,
+        token,
+        max_age=REFRESH_COOKIE_MAX_AGE,
+        path=REFRESH_COOKIE_PATH,
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def clear_refresh_cookie(response, secure: bool) -> None:
+    response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH, secure=secure, samesite="lax")
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")

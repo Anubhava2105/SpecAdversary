@@ -15,6 +15,50 @@ def _signup(email: str = "rotate@example.com") -> dict:
     return r.json()
 
 
+def _refresh_cookie(response) -> str | None:
+    """Extract the sa_refresh cookie the server set, if any."""
+    raw = response.headers.get("set-cookie", "")
+    for part in raw.split(","):
+        if part.strip().startswith("sa_refresh="):
+            return part.strip().split(";", 1)[0].split("=", 1)[1].strip('"')
+    return None
+
+
+def test_login_sets_httponly_refresh_cookie():
+    r = client.post("/auth/signup", json={"email": "cookie@example.com", "password": "password123"})
+    assert r.status_code == 200
+    jar = r.headers.get("set-cookie", "").lower()
+    assert "sa_refresh=" in jar
+    assert "httponly" in jar
+    assert "samesite=lax" in jar
+    assert "path=/auth" in jar
+
+
+def test_refresh_works_from_cookie_without_body():
+    from fastapi.testclient import TestClient as TC
+
+    jar_client = TC(app)
+    signup = jar_client.post("/auth/signup", json={"email": "cookierefresh@example.com", "password": "password123"})
+    assert signup.status_code == 200
+    # TestClient persists cookies: refresh with an empty body, cookie carries it.
+    r = jar_client.post("/auth/refresh", json={})
+    assert r.status_code == 200
+    assert "access_token" in r.json()
+    assert _refresh_cookie(r) is not None
+
+
+def test_logout_clears_cookie():
+    from fastapi.testclient import TestClient as TC
+
+    jar_client = TC(app)
+    jar_client.post("/auth/signup", json={"email": "cookielogout@example.com", "password": "password123"})
+    r = jar_client.post("/auth/logout", json={})
+    assert r.status_code == 200
+    cleared = r.headers.get("set-cookie", "").lower()
+    assert "sa_refresh=" in cleared
+    assert "max-age=0" in cleared or 'expires=' in cleared
+
+
 def test_refresh_rotates_and_supersedes_old_token():
     tokens = _signup()
     old_refresh = tokens["refresh_token"]
