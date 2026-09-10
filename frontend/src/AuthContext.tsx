@@ -28,27 +28,9 @@ export function useAuth(): AuthContextValue {
   return ctx;
 }
 
-function storeTokens(access: string, refresh: string) {
-  localStorage.setItem('sa_access_token', access);
-  localStorage.setItem('sa_refresh_token', refresh);
-}
-
-function clearTokens() {
-  localStorage.removeItem('sa_access_token');
-  localStorage.removeItem('sa_refresh_token');
-}
-
-function getStoredAccess(): string | null {
-  return localStorage.getItem('sa_access_token');
-}
-
-function getStoredRefresh(): string | null {
-  return localStorage.getItem('sa_refresh_token');
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(getStoredAccess());
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Silent refreshes (e.g. apiFetch's 401 retry) publish the fresh token here
@@ -59,61 +41,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('sa:token-refreshed', onRefresh);
   }, []);
 
-  // Validate token on mount
+  // Session restore on mount: the access token is memory-only, so a reload
+  // starts unauthenticated until the HttpOnly refresh cookie mints a fresh
+  // pair. No token material is ever written to storage.
   useEffect(() => {
-    const stored = getStoredAccess();
-    if (!stored) {
-      setLoading(false);
-      return;
-    }
-    fetch(`${API}/auth/me`, {
-      headers: { Authorization: `Bearer ${stored}` },
-    })
-      .then(async (r) => {
-        if (r.ok) {
-          const data = await r.json();
-          setUser(data);
-          setToken(stored);
-        } else if (r.status === 401) {
-          // Try refresh
-          const refresh = getStoredRefresh();
-          if (refresh) {
-            const rr = await fetch(`${API}/auth/refresh`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ refresh_token: refresh }),
-            });
-            if (rr.ok) {
-              const tokens = await rr.json();
-              storeTokens(tokens.access_token, tokens.refresh_token);
-              setToken(tokens.access_token);
-              // Re-fetch user
-              const mr = await fetch(`${API}/auth/me`, {
-                headers: { Authorization: `Bearer ${tokens.access_token}` },
-              });
-              if (mr.ok) {
-                setUser(await mr.json());
-              }
-            } else {
-              clearTokens();
-              setToken(null);
-            }
-          } else {
-            clearTokens();
-            setToken(null);
-          }
-        }
-      })
-      .catch(() => {
-        /* offline — keep existing token, will retry later */
-      })
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    (async () => {
+      try {
+        const rr = await fetch(`${API}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!rr.ok) return;
+        const tokens = await rr.json();
+        if (cancelled) return;
+        setToken(tokens.access_token);
+        const mr = await fetch(`${API}/auth/me`, {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        });
+        if (!cancelled && mr.ok) setUser(await mr.json());
+      } catch {
+        /* offline or logged out — stay a guest */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Sign-in responses set the refresh cookie (credentials: include is what
+  // lets the browser accept it). Only the short-lived access token is kept,
+  // in memory; the response-body refresh token is ignored by this client.
   const login = useCallback(async (email: string, password: string) => {
     const r = await fetch(`${API}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
     if (!r.ok) {
@@ -121,7 +86,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail || 'Login failed');
     }
     const data = await r.json();
-    storeTokens(data.access_token, data.refresh_token);
     setToken(data.access_token);
     setUser(data.user);
   }, []);
@@ -130,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await fetch(`${API}/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         email,
         password,
@@ -142,7 +107,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail || 'Signup failed');
     }
     const data = await r.json();
-    storeTokens(data.access_token, data.refresh_token);
     setToken(data.access_token);
     setUser(data.user);
   }, []);
@@ -151,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await fetch(`${API}/auth/${provider}/callback`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ code, redirect_uri: redirectUri, claim_session_id: claimSessionId || null }),
     });
     if (!r.ok) {
@@ -158,7 +123,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail || 'OAuth failed');
     }
     const data = await r.json();
-    storeTokens(data.access_token, data.refresh_token);
     setToken(data.access_token);
     setUser(data.user);
   }, []);
@@ -172,16 +136,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    const refresh = getStoredRefresh();
-    if (refresh) {
-      // Server-side revocation; ignore failures (e.g. offline) — tokens are cleared regardless.
-      fetch(`${API}/auth/logout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refresh }),
-      }).catch(() => undefined);
-    }
-    clearTokens();
+    // The cookie travels automatically; server revokes and clears it.
+    // Failures (e.g. offline) are ignored — memory state clears regardless.
+    fetch(`${API}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => undefined);
     setToken(null);
     setUser(null);
   }, []);

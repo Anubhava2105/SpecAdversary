@@ -8,19 +8,19 @@ export interface AuthHeaders {
   getAuthHeaders(): Record<string, string>;
 }
 
+/**
+ * The refresh token is an HttpOnly cookie the browser sends automatically,
+ * so page JS never holds the long-lived credential and XSS cannot
+ * exfiltrate it. The short-lived access token lives in AuthContext state.
+ */
 async function refreshAccessToken(): Promise<string | null> {
-  const refresh = localStorage.getItem('sa_refresh_token');
-  if (!refresh) return null;
   try {
     const r = await fetch(`${API}/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refresh }),
+      credentials: 'include',
     });
     if (!r.ok) return null;
     const tokens = await r.json();
-    localStorage.setItem('sa_access_token', tokens.access_token);
-    localStorage.setItem('sa_refresh_token', tokens.refresh_token);
     window.dispatchEvent(new CustomEvent('sa:token-refreshed', { detail: tokens.access_token }));
     return tokens.access_token as string;
   } catch {
